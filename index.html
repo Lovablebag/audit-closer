@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audit Closer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <style>
+    :root {
+      --bg: #f1efe8;
+      --surface: #fbfaf6;
+      --surface-2: #fff;
+      --ink: #17202a;
+      --muted: #5e6b78;
+      --faint: #8b97a3;
+      --line: #d7dce3;
+      --accent: #1a7dc4;
+      --accent-hover: #1569a6;
+      --accent-fg: #fff;
+      --accent-soft: #e4f1fa;
+      --warn: #9a6700;
+      --warn-soft: #f8efd8;
+      --ok: #0e6b45;
+      --ok-soft: #e3f5ec;
+      --slide: #f7f8fb;
+      --slide-ink: #1a1a2e;
+      --slide-muted: #555566;
+      --slide-card: #f4f6fa;
+      --slide-line: #c0c8d8;
+      --shadow: 0 0 0 1px rgb(23 32 42 / 0.06), 0 1px 2px -1px rgb(23 32 42 / 0.06), 0 2px 4px 0 rgb(23 32 42 / 0.04);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: "IBM Plex Sans", sans-serif; }
+    button, [role="button"] { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .4; }
+    h1, h2, h3 { font-family: Fraunces, Georgia, serif; font-weight: 500; text-wrap: balance; margin: 0; }
+    p { margin: 0; text-wrap: pretty; }
+    header.app {
+      border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+      background: var(--surface);
+    }
+    header.app .inner {
+      max-width: 72rem; margin: 0 auto; padding: .75rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    }
+    .brand { display: flex; align-items: center; gap: .75rem; }
+    .mark { width: 2rem; height: 2rem; border-radius: 6px; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+    .eyebrow { font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+    main { max-width: 72rem; margin: 0 auto; padding: 1.5rem; padding-bottom: 7rem; }
+    .wrap { max-width: 40rem; margin: 0 auto; display: grid; gap: 2rem; }
+    .drop {
+      min-height: 14rem; border: 1px dashed var(--line); border-radius: 18px;
+      background: var(--surface); box-shadow: var(--shadow);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: .75rem; padding: 2.5rem 1.5rem; text-align: center;
+    }
+    .drop.drag { border-color: var(--accent); background: var(--accent-soft); }
+    .icon {
+      width: 3rem; height: 3rem; border-radius: 10px; background: var(--accent-soft); color: var(--accent);
+      display: grid; place-items: center; font-size: 1.25rem;
+    }
+    .card { background: var(--surface); border-radius: 18px; box-shadow: var(--shadow); padding: 1.25rem 1.5rem; }
+    .badges { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+    .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: .15rem .65rem; font-size: 12px; font-weight: 500; background: var(--accent-soft); color: var(--accent); }
+    .badge.muted { background: color-mix(in srgb, var(--line) 60%, white); color: var(--muted); }
+    .badge.warn { background: var(--warn-soft); color: var(--warn); }
+    .badge.ok { background: var(--ok-soft); color: var(--ok); }
+    .row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1.5rem; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+      height: 2.75rem; padding: 0 1rem; border: 0; border-radius: 8px;
+      background: var(--accent); color: var(--accent-fg); font: 500 14px "IBM Plex Sans", sans-serif;
+    }
+    .btn:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn.secondary { background: var(--surface-2); color: var(--ink); box-shadow: var(--shadow); }
+    .btn.outline { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    .btn.ghost { background: transparent; color: var(--ink); height: 2.25rem; }
+    .btn.sm { height: 2.25rem; padding: 0 .75rem; font-size: 12px; }
+    .muted { color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .warnbox { background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: .75rem 1rem; font-size: 14px; }
+    .grid2 { display: grid; gap: 1.5rem; }
+    @media (min-width: 960px) { .grid2 { grid-template-columns: 1fr 1fr; align-items: start; } }
+    .editor-head { display: flex; flex-wrap: wrap; gap: .75rem; justify-content: space-between; align-items: flex-end; }
+    .item { border: 1px solid var(--line); background: var(--surface-2); border-radius: 10px; padding: .75rem; display: grid; gap: .5rem; }
+    input, textarea, select {
+      width: 100%; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink);
+      border-radius: 8px; font: 14px "IBM Plex Sans", sans-serif; padding: .5rem .75rem;
+    }
+    input:focus, textarea:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-color: var(--accent); }
+    textarea { min-height: 5rem; resize: vertical; line-height: 1.5; }
+    .item-bar { display: flex; gap: .5rem; align-items: center; }
+    .iconbtn {
+      width: 2.25rem; height: 2.25rem; border: 0; background: transparent; color: var(--muted); border-radius: 8px;
+    }
+    .iconbtn:hover:not(:disabled) { background: var(--accent-soft); color: var(--ink); }
+    .slide {
+      aspect-ratio: 16/9; background: var(--slide); border-radius: 10px; overflow: hidden;
+      box-shadow: var(--shadow); padding: 1rem; display: flex; flex-direction: column;
+    }
+    .preview-card { flex: 1; min-height: 0; display: flex; overflow: hidden; border: 1px solid var(--slide-line); background: var(--slide-card); border-radius: 4px; }
+    .preview-card bstrip { display: block; }
+    .bar { width: 4px; background: var(--accent); flex-shrink: 0; }
+    .preview-body { padding: .4rem .7rem; overflow: hidden; min-width: 0; }
+    .preview-body ul { margin: .25rem 0 0; padding: 0; list-style: none; font-size: 10px; line-height: 1.35; }
+    .dock {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+      border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 95%, transparent);
+      padding: .75rem 1rem;
+    }
+    .dock .inner { max-width: 72rem; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hidden { display: none !important; }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  </style>
+</head>
+<body>
+  <header class="app">
+    <div class="inner">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2" fill="currentColor" opacity=".25"/><rect x="4" y="3" width="3" height="18" rx="1" fill="currentColor"/></svg>
+        </span>
+        <div>
+          <p style="font-family:Fraunces,Georgia,serif;font-size:1.125rem;line-height:1">Audit Closer</p>
+          <p class="eyebrow" style="margin-top:2px">G2 Yield</p>
+        </div>
+      </div>
+      <p class="muted" style="font-size:14px">Next Steps, then download</p>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-idle" class="wrap">
+      <div>
+        <h1 style="font-size:2.25rem">Close the last slide.</h1>
+        <p class="muted" style="margin-top:.75rem;max-width:36rem;font-size:16px">
+          Drop a hotel contract audit. The app drafts Strategic Recommendations and Suggested Promos from the yield rules. You edit. Then download the completed deck.
+        </p>
+      </div>
+      <button type="button" class="drop" id="dropzone">
+        <span class="icon">↑</span>
+        <div>
+          <p style="font-family:Fraunces,Georgia,serif;font-size:1.25rem">Drop a hotel audit</p>
+          <p class="muted" style="margin-top:.35rem">PPTX in the G2 contract audit format.</p>
+        </div>
+        <span style="color:var(--accent);font-weight:500;font-size:14px">or browse files</span>
+      </button>
+      <input id="file" class="sr" type="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+      <p id="idle-error" class="warnbox hidden"></p>
+    </section>
+
+    <section id="view-parsed" class="wrap hidden">
+      <div class="card">
+        <p class="eyebrow">Deck loaded</p>
+        <h2 id="parsed-hotel" style="font-size:1.75rem;margin-top:.25rem"></h2>
+        <p class="muted" id="parsed-file" style="margin-top:.25rem"></p>
+        <div class="badges" id="parsed-badges"></div>
+        <p class="muted" style="margin-top:1.25rem" id="parsed-note"></p>
+        <p id="parsed-error" class="warnbox hidden" style="margin-top:.75rem"></p>
+        <div class="row">
+          <button class="btn" id="btn-draft">Draft Next Steps</button>
+          <button class="btn outline" id="btn-another">Use another deck</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-analyzing" class="wrap hidden">
+      <div class="card" style="text-align:center;padding:4rem 1.5rem">
+        <div class="spin" style="width:2rem;height:2rem;border:3px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;margin:0 auto"></div>
+        <h2 style="margin-top:1rem;font-size:1.35rem">Drafting Next Steps</h2>
+        <p class="muted" style="margin-top:.35rem" id="analyzing-note"></p>
+      </div>
+    </section>
+
+    <section id="view-editing" class="hidden">
+      <div class="grid2">
+        <div style="display:grid;gap:1.5rem">
+          <div class="editor-head">
+            <div>
+              <p class="eyebrow">Editing Next Steps</p>
+              <h2 id="edit-hotel" style="font-size:1.75rem"></h2>
+              <div class="badges" id="edit-badges"></div>
+            </div>
+            <div class="row" style="margin:0">
+              <button class="btn outline sm" id="btn-redraft">Re-draft</button>
+              <button class="btn outline sm" id="btn-new">New deck</button>
+            </div>
+          </div>
+          <div id="warnings" class="warnbox hidden"></div>
+          <section class="card">
+            <div style="display:flex;justify-content:space-between;gap:.75rem;align-items:center">
+              <div>
+                <h3 style="font-size:14px;font-family:inherit;font-weight:600">Strategic Recommendations</h3>
+                <p class="muted" style="font-size:12px">Bullets, never numbered. Label then action then figure.</p>
+              </div>
+              <span class="badge muted" id="fit-rec">Fits the box</span>
+            </div>
+            <div id="rec-list" style="margin-top:1rem;display:grid;gap:.75rem"></div>
+            <button class="btn ghost" id="btn-add-rec" style="margin-top:.75rem">+ Add recommendation</button>
+          </section>
+          <section class="card">
+            <div style="display:flex;justify-content:space-between;gap:.75rem;align-items:center">
+              <div>
+                <h3 style="font-size:14px;font-family:inherit;font-weight:600">Suggested Promos</h3>
+                <p class="muted" style="font-size:12px">Closed names only. One promo per real gap.</p>
+              </div>
+              <span class="badge muted" id="fit-promo">Fits the box</span>
+            </div>
+            <div id="promo-list" style="margin-top:1rem;display:grid;gap:.75rem"></div>
+            <button class="btn ghost" id="btn-add-promo" style="margin-top:.75rem">+ Add promo</button>
+          </section>
+        </div>
+        <aside>
+          <p class="eyebrow" style="margin-bottom:.75rem">Slide preview</p>
+          <div class="slide" id="slide-preview"></div>
+          <p class="muted" style="font-size:12px;margin-top:.75rem">Layout, colours and fonts stay as in the original deck. Only the two placeholder blocks are replaced.</p>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <div class="dock hidden" id="dock">
+    <div class="inner">
+      <div style="min-width:0">
+        <p class="eyebrow">Save the deck</p>
+        <p id="dock-name" style="font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></p>
+      </div>
+      <button class="btn" id="btn-download" disabled>Preparing file…</button>
+    </div>
+  </div>
+
+<script>
+const PROMO_NAMES = ["Early Booking","Last Minute","Flash Sale","Long Stay","Geo Promo","Opaque"];
+const AMP = "&", LT = "<", GT = ">", QUOT = '"';
+
+const state = {
+  phase: "idle",
+  fileName: "",
+  fileBytes: null,
+  parsed: null,
+  draft: null,
+  error: "",
+  downloadUrl: null,
+  downloadName: "",
+  ready: false,
+};
+
+function uid() {
+  return "id_" + Math.random().toString(36).slice(2, 10);
+}
+function stripDashes(s) {
+  return String(s || "")
+    .replace(/\u2014/g, ". ")
+    .replace(/\u2013/g, "-")
+    .replace(/\s+\.\s+/g, ". ")
+    .replace(/\.\s*\./g, ".")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+function sanitizeBody(s) {
+  return stripDashes(s)
+    .replace(/\brevenue at risk\b/gi, "lost revenue")
+    .replace(/\bat risk\b/gi, "lost")
+    .replace(/\bRadar\s+\d+\s*\/\s*100\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+function decodeXml(s) {
+  return s
+    .replace(/&/g, AMP)
+    .replace(/</g, LT)
+    .replace(/>/g, GT)
+    .replace(/"/g, QUOT)
+    .replace(/'/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+function encodeXml(s) {
+  return String(s)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    .replace(/&/g, "&")
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/"/g, """);
+}
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&")
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/"/g, """);
+}
+function formatRecommendation(item) {
+  const label = stripDashes(item.label).replace(/:+$/, "");
+  const body = sanitizeBody(item.body);
+  return (label + ": " + body).trim();
+}
+function formatPromo(item) {
+  const name = stripDashes(item.name).replace(/:+$/, "");
+  const conditions = stripDashes(item.conditions);
+  const body = sanitizeBody(item.body);
+  const prefix = conditions ? name + " (" + conditions + ")" : name;
+  return (prefix + ": " + body).trim();
+}
+function completedFileName(hotel, original) {
+  const safe = (hotel || "Hotel").replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "").replace(/_+/g, "_") || "Hotel";
+  return safe + "_Audit_COMPLETED.pptx";
+}
+
+function extractTextRuns(xml) {
+  const runs = [];
+  const re = /<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g;
+  let m;
+  while ((m = re.exec(xml))) {
+    const t = decodeXml(m[1]).replace(/\s+/g, " ").trim();
+    if (t) runs.push(t);
+  }
+  return runs;
+}
+function extractChartValues(xml) {
+  const vals = [];
+  const re = /<c:v>([\s\S]*?)<\/c:v>/g;
+  let m;
+  while ((m = re.exec(xml))) {
+    const t = decodeXml(m[1]).replace(/\s+/g, " ").trim();
+    if (t) vals.push(t);
+  }
+  return vals.join(" | ");
+}
+function pickAfter(texts, label) {
+  const i = texts.findIndex((t) => t.toLowerCase() === label.toLowerCase());
+  return i >= 0 && texts[i + 1] ? texts[i + 1] : "";
+}
+function headingFrom(texts) {
+  const skip = new Set(["hotel contract", "audit", "g2 travel"]);
+  return texts.find((t) => t.length > 2 && !skip.has(t.toLowerCase()) && !/^\d+$/.test(t)) || texts[0] || "Slide";
+}
+function xmlGet(xml, tag) {
+  const m = xml.match(new RegExp("<" + tag + "[^>]*>([\\s\\S]*?)</" + tag + ">"));
+  return m ? decodeXml(m[1]).trim() : "";
+}
+
+async function parseAuditPptx(buf, fileName) {
+  const zip = await JSZip.loadAsync(buf);
+  const slideFiles = Object.keys(zip.files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/i.test(n))
+    .sort((a, b) => Number(/slide(\d+)/i.exec(a)[1]) - Number(/slide(\d+)/i.exec(b)[1]));
+  if (!slideFiles.length) throw new Error("This file does not look like a PowerPoint audit deck.");
+
+  const slides = [];
+  for (let i = 0; i < slideFiles.length; i++) {
+    const xml = await zip.file(slideFiles[i]).async("string");
+    const texts = extractTextRuns(xml);
+    slides.push({ index: i + 1, heading: headingFrom(texts), text: texts.join(" | ") });
+  }
+  const chartFiles = Object.keys(zip.files)
+    .filter((n) => /^ppt\/charts\/chart\d+\.xml$/i.test(n))
+    .sort((a, b) => Number(/chart(\d+)/i.exec(a)[1]) - Number(/chart(\d+)/i.exec(b)[1]));
+  const charts = [];
+  for (let i = 0; i < chartFiles.length; i++) {
+    const xml = await zip.file(chartFiles[i]).async("string");
+    charts.push({ index: i + 1, values: extractChartValues(xml) });
+  }
+  const coreXml = (await zip.file("docProps/core.xml")?.async("string")) || "";
+  const title = xmlGet(coreXml, "dc:title");
+  const cover = (slides[0]?.text.split(" | ") || []).map((t) => t.trim());
+  const hotelFromTitle = title.replace(/^Hotel Contract Audit\s+/i, "").trim();
+  const hotelName =
+    (cover[0]?.toLowerCase() === "hotel contract" && cover[1]?.toLowerCase() === "audit" ? cover[2] : "") ||
+    hotelFromTitle || "Hotel";
+  const city = pickAfter(cover, "City") || pickAfter(cover, "Master city") || cover[3] || "";
+  const auditDate = cover.find((t) => /\d{1,2}\s+\w+\s+\d{4}/.test(t)) || pickAfter(cover, "Date") || "";
+  const contractType = pickAfter(cover, "Contract type");
+  const channel = pickAfter(cover, "Channel");
+  const commission = pickAfter(cover, "Commission");
+
+  let nextStepsSlideIndex = slides.findIndex((s) => /strategic recommendations/i.test(s.text) && /suggested promos/i.test(s.text));
+  if (nextStepsSlideIndex < 0) nextStepsSlideIndex = slides.findIndex((s) => /next steps/i.test(s.heading));
+  if (nextStepsSlideIndex < 0) throw new Error("Could not find a Next Steps slide with Strategic Recommendations and Suggested Promos.");
+
+  const parts = ["FILE: " + fileName, "TITLE: " + (title || hotelName), ""];
+  for (const s of slides) {
+    parts.push("=== SLIDE " + s.index + ": " + s.heading + " ===");
+    parts.push(s.text);
+    parts.push("");
+  }
+  if (charts.length) {
+    parts.push("=== EMBEDDED CHART VALUES (document order) ===");
+    for (const c of charts) parts.push("Chart " + c.index + ": " + c.values);
+  }
+  return {
+    fileName, title: title || hotelName, hotelName, city, auditDate, contractType, channel, commission,
+    slideCount: slides.length, nextStepsSlideIndex: nextStepsSlideIndex + 1, slides, charts,
+    auditText: parts.join("\n"),
+  };
+}
+
+const FONT_RUN = '<a:latin typeface="Calibri" pitchFamily="34" charset="0"/><a:ea typeface="Calibri" pitchFamily="34" charset="-122"/><a:cs typeface="Calibri" pitchFamily="34" charset="-120"/>';
+function runXml(text, sz, bold) {
+  const b = bold ? ' b="1"' : "";
+  const space = text.startsWith(" ") || text.endsWith(" ") ? ' xml:space="preserve"' : "";
+  return '<a:r><a:rPr lang="en-US" sz="' + sz + '"' + b + ' dirty="0"><a:solidFill><a:srgbClr val="1A2332"/></a:solidFill>' + FONT_RUN + "</a:rPr><a:t" + space + ">" + encodeXml(text) + "</a:t></a:r>";
+}
+function paraXml(prefix, rest, sz) {
+  const pPr = '<a:pPr marL="165100" indent="-165100"><a:lnSpc><a:spcPct val="108000"/></a:lnSpc><a:spcAft val="600"/><a:buFont typeface="Arial"/><a:buChar char="•"/><a:defRPr sz="' + sz + '"/></a:pPr>';
+  return "<a:p>" + pPr + (prefix ? runXml(prefix, sz, true) : "") + (rest ? runXml(rest, sz, false) : "") + '<a:endParaRPr lang="en-US" sz="' + sz + '" dirty="0"/></a:p>';
+}
+function nonePara(sz) {
+  return '<a:p><a:pPr indent="0" marL="0"><a:buNone/></a:pPr>' + runXml("None.", sz, false) + '<a:endParaRPr lang="en-US" sz="' + sz + '" dirty="0"/></a:p>';
+}
+function fillShape(shapeXml, paras) {
+  let out = shapeXml.replace(/<a:bodyPr\b[^>]*\/?>(?:<\/a:bodyPr>)?/, '<a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:normAutofit/></a:bodyPr>');
+  if (/<a:lstStyle\s*\/>/.test(out)) {
+    out = out.replace(/<a:lstStyle\s*\/>[\s\S]*?<\/p:txBody>/, "<a:lstStyle/>" + paras + "</p:txBody>");
+  } else if (/<a:lstStyle>[\s\S]*?<\/a:lstStyle>/.test(out)) {
+    out = out.replace(/<a:lstStyle>[\s\S]*?<\/a:lstStyle>[\s\S]*?<\/p:txBody>/, (m) => {
+      const open = m.match(/<a:lstStyle>[\s\S]*?<\/a:lstStyle>/)?.[0] || "<a:lstStyle/>";
+      return open + paras + "</p:txBody>";
+    });
+  } else {
+    out = out.replace(/<\/p:txBody>/, paras + "</p:txBody>");
+  }
+  return out;
+}
+function shapePlainText(xml) {
+  return extractTextRuns(xml).join(" ").replace(/\s+/g, " ").trim();
+}
+function chooseSize(a, b) {
+  const n = Math.max(a, b);
+  if (n <= 3) return 1100;
+  if (n <= 5) return 1000;
+  if (n <= 7) return 900;
+  return 800;
+}
+async function writeCompletedPptx(original, draft) {
+  const zip = await JSZip.loadAsync(original);
+  const slideFiles = Object.keys(zip.files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/i.test(n))
+    .sort((a, b) => Number(/slide(\d+)/i.exec(a)[1]) - Number(/slide(\d+)/i.exec(b)[1]));
+  let targetPath = null, targetXml = "";
+  for (const path of slideFiles) {
+    const xml = await zip.file(path).async("string");
+    const text = shapePlainText(xml);
+    if (/strategic recommendations/i.test(text) && /suggested promos/i.test(text)) {
+      targetPath = path; targetXml = xml; break;
+    }
+  }
+  if (!targetPath) throw new Error("Could not find the Next Steps slide to fill.");
+  const shapes = targetXml.match(/<p:sp\b[\s\S]*?<\/p:sp>/g) || [];
+  const recs = draft.recommendations.filter((r) => r.label.trim() || r.body.trim());
+  const promos = draft.promos.filter((p) => p.name.trim() || p.body.trim());
+  const sz = chooseSize(recs.length, promos.length);
+  const recParas = recs.length ? recs.map((r) => {
+    const full = formatRecommendation(r);
+    const prefix = r.label.replace(/:+$/, "").trim() ? r.label.replace(/:+$/, "").trim() + ": " : "";
+    const rest = prefix && full.startsWith(prefix) ? full.slice(prefix.length) : full;
+    return paraXml(prefix, rest, sz);
+  }).join("") : nonePara(sz);
+  const promoParas = promos.length ? promos.map((p) => {
+    const full = formatPromo(p);
+    const name = p.name.replace(/:+$/, "").trim();
+    const conditions = p.conditions.trim();
+    const prefix = conditions ? name + " (" + conditions + "): " : name ? name + ": " : "";
+    const rest = prefix && full.startsWith(prefix) ? full.slice(prefix.length) : full;
+    return paraXml(prefix, rest, sz);
+  }).join("") : nonePara(sz);
+
+  let recTitle = -1, promoTitle = -1;
+  for (let i = 0; i < shapes.length; i++) {
+    const t = shapePlainText(shapes[i]);
+    if (recTitle < 0 && /^strategic recommendations$/i.test(t)) recTitle = i;
+    if (promoTitle < 0 && /^suggested promos$/i.test(t)) promoTitle = i;
+  }
+  if (recTitle < 0 || promoTitle < 0) throw new Error("Next Steps slide is missing the two section headings.");
+  const nextText = (from) => { for (let i = from + 1; i < shapes.length; i++) if (shapes[i].includes("<p:txBody")) return i; return -1; };
+  const recBody = nextText(recTitle), promoBody = nextText(promoTitle);
+  if (recBody < 0 || promoBody < 0) throw new Error("Could not locate the two content boxes on Next Steps.");
+  const replaced = shapes.slice();
+  replaced[recBody] = fillShape(shapes[recBody], recParas);
+  replaced[promoBody] = fillShape(shapes[promoBody], promoParas);
+  let rebuilt = targetXml;
+  for (let i = 0; i < shapes.length; i++) if (replaced[i] !== shapes[i]) rebuilt = rebuilt.replace(shapes[i], replaced[i]);
+  zip.file(targetPath, rebuilt);
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+}
+
+function nums(s) {
+  return [...String(s).matchAll(/([+-]?\d+(?:\.\d+)?)\s*%/g)].map((m) => Number(m[1]));
+}
+function has(t, re) { return re.test(t); }
+function liveOffers(t) {
+  return {
+    flash: /flash sale/i.test(t),
+    lastMinute: /last minute/i.test(t),
+    early: /early booking/i.test(t),
+    longStay: /long stay/i.test(t),
+    geo: /geo promo/i.test(t),
+    opaque: /opaque/i.test(t),
+  };
+}
+function countMatch(t, re) {
+  const m = t.match(re);
+  return m ? Number(m[1]) : null;
+}
+function extractWindows(t) {
+  const labels = ["1-5", "6-15", "16-30", "31-60", "61-90", "91-120", "121-180", "181"];
+  const found = [];
+  for (const lab of labels) {
+    const re = new RegExp(lab.replace("+", "\\+") + "[^\\n]{0,80}?(\\d+(?:\\.\\d+)?)\\s*%[^\\n]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
+    const m = t.match(re);
+    if (m) found.push({ label: lab === "181" ? "181+" : lab + (lab.includes("-") ? " days" : ""), hotel: Number(m[1]), target: Number(m[2]) });
+  }
+  return found.filter((w) => w.hotel + 1 < w.target);
+}
+function extractLOS(t) {
+  const m = t.match(/1\s*N(?:ight)?[^%\n]{0,40}(\d+(?:\.\d+)?)\s*%[^%\n]{0,40}(\d+(?:\.\d+)?)\s*%/i)
+    || t.match(/1-night[^%\n]{0,40}(\d+(?:\.\d+)?)\s*%[^%\n]{0,40}(\d+(?:\.\d+)?)\s*%/i);
+  if (m && Number(m[1]) + 1 < Number(m[2])) return { hotel: Number(m[1]), target: Number(m[2]) };
+  return null;
+}
+function extractWeekdays(t) {
+  const days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const weak = [];
+  for (const d of days) {
+    const re = new RegExp(d + "[^\\n%]{0,30}(\\d+(?:\\.\\d+)?)\\s*%[^\\n%]{0,30}(\\d+(?:\\.\\d+)?)\\s*%", "i");
+    const m = t.match(re);
+    if (m && Number(m[1]) + 1 < Number(m[2])) weak.push({ day: d, hotel: Number(m[1]), target: Number(m[2]) });
+  }
+  return weak;
+}
+function extractMarkets(t) {
+  const names = ["United States","United Kingdom","Germany","France","China","Italy","Spain","Netherlands","Belgium","Switzerland","Austria","Poland","Sweden","Norway","Denmark","Ireland","Portugal","Greece","Turkey","UAE","Saudi","Japan","Korea","Australia","Canada","Brazil","India","Russia"];
+  const weak = [];
+  for (const n of names) {
+    const re = new RegExp(n + "[^\\n]{0,50}?(\\d+(?:\\.\\d+)?)\\s*%[^\\n]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
+    const m = t.match(re);
+    if (m && Number(m[1]) + 0.5 < Number(m[2])) weak.push({ name: n, hotel: Number(m[1]), target: Number(m[2]) });
+  }
+  return weak;
+}
+function vsB2B(t) {
+  const hits = [...t.matchAll(/([+-]?\d+(?:\.\d+)?)\s*%[^|]{0,24}vs\.?\s*B2B/gi)];
+  if (hits.length) return hits.map((h) => Number(h[1]));
+  const alt = [...t.matchAll(/G2\s+vs\.?\s*B2B[^%\n]{0,20}([+-]?\d+(?:\.\d+)?)\s*%/gi)];
+  return alt.map((h) => Number(h[1]));
+}
+
+function draftFromAudit(parsed) {
+  const t = parsed.auditText;
+  const recs = [];
+  const promos = [];
+  const warnings = [];
+  const live = liveOffers(t);
+  const b2b = vsB2B(t);
+  const worstB2B = b2b.length ? Math.max(...b2b) : null;
+  const stop = countMatch(t, /(\d+)\s+stop[-\s]?sale/i);
+  const sold = countMatch(t, /(\d+)\s+sold[-\s]?out/i);
+  const unavail = countMatch(t, /(\d+)\s+unavailable/i);
+  const cancel = countMatch(t, /(\d+(?:\.\d+)?)\s*%\s*(?:cancel|cancellation)/i) || countMatch(t, /cancell(?:ation|ed)[^%\n]{0,30}(\d+(?:\.\d+)?)\s*%/i);
+  const windows = extractWindows(t);
+  const los = extractLOS(t);
+  const weekdays = extractWeekdays(t);
+  const markets = extractMarkets(t);
+  const shortWindows = windows.filter((w) => /1-5|6-15/.test(w.label));
+  const longWindows = windows.filter((w) => /121|181/.test(w.label));
+
+  if (worstB2B !== null && worstB2B > -10) {
+    const action = live.flash || live.longStay
+      ? "Deepen discounts on the live Flash Sale and Long Stay offers until B2B reaches <= -10% on every term."
+      : "Create a new promo with a discount large enough to put G2 at B2B <= -10% on every term.";
+    recs.push({ id: uid(), label: "Competitiveness", body: action + " Current G2 vs B2B includes " + worstB2B + "%." });
+    if (live.flash) {
+      promos.push({ id: uid(), name: "Flash Sale", conditions: "NRF, min 12% off, short-term, combinable", body: "Strengthen the live Flash Sale so short-term G2 clears B2B <= -10%. Current position includes " + worstB2B + "% vs B2B." });
+    } else {
+      promos.push({ id: uid(), name: "Flash Sale", conditions: "NRF, min 12% off, short-term, combinable", body: "Launch a Flash Sale large enough to push short-term G2 to B2B <= -10%. Current position includes " + worstB2B + "% vs B2B." });
+    }
+  }
+
+  const stopN = stop || 0, soldN = sold || 0, unN = unavail || (stopN + soldN);
+  if (stopN || soldN || unN) {
+    const bits = [];
+    if (stopN) bits.push("Re-open the " + stopN + " stop-sale days");
+    if (soldN) bits.push("check top-up allotment on the " + soldN + " sold-out days");
+    recs.push({
+      id: uid(),
+      label: "Availability & Set-up",
+      body: (bits.join(" and ") || "Review blocked inventory") + ". " + (unN ? unN + " unavailable days are blocking bookable inventory." : "Availability flags are blocking bookable inventory."),
+    });
+  }
+
+  if (windows.length) {
+    const list = windows.map((w) => w.label + " " + w.hotel + "% vs " + w.target + "%").join(", ");
+    recs.push({
+      id: uid(),
+      label: "Booking Window",
+      body: (shortWindows.length ? "Activate short-lead demand for the " + shortWindows.map((w) => w.label).join(" and ") + " windows" : "Rebalance booking-window production") +
+        (longWindows.length ? " and renew early-bird coverage for " + longWindows.map((w) => w.label).join(" and ") : "") +
+        ". Shares: " + list + ".",
+    });
+    if (shortWindows.length) {
+      const name = "Last Minute";
+      const verb = live.lastMinute ? "Tighten the live Last Minute" : "Activate Last Minute";
+      promos.push({
+        id: uid(), name, conditions: "NRF, 12% off, booking window 1-15 days, 1N eligible",
+        body: verb + " to close " + shortWindows.map((w) => w.label + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
+      });
+    }
+    if (longWindows.length) {
+      const verb = live.early ? "Renew the Early Booking offers" : "Launch Early Booking";
+      promos.push({
+        id: uid(), name: "Early Booking", conditions: "10% off, 121+ day window, NRF option",
+        body: verb + " and retarget " + longWindows.map((w) => w.label + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
+      });
+    }
+  }
+
+  if (los) {
+    recs.push({
+      id: uid(),
+      label: "Length of Stay",
+      body: "Stimulate 1-night production with a dedicated single-night condition. Hotel 1N share is " + los.hotel + "% versus the " + los.target + "% target.",
+    });
+    promos.push({
+      id: uid(),
+      name: "Long Stay",
+      conditions: live.longStay ? "add 1N tier, keep longer-stay discounts, combinable with Opaque" : "1N 8%, 2N 10%, 3N+ 12%, combinable",
+      body: (live.longStay ? "Extend the live Long Stay offer with a 1-night tier. " : "Launch a Long Stay offer with a 1-night tier. ") +
+        "1N share is " + los.hotel + "% vs " + los.target + "% target.",
+    });
+  }
+
+  if (markets.length) {
+    const names = markets.map((m) => m.name);
+    const shares = markets.map((m) => m.hotel + "% vs " + m.target + "%").join(", ");
+    recs.push({
+      id: uid(),
+      label: "Source Markets",
+      body: "Open geo push on " + names.join(", ") + ". Shares are " + shares + ".",
+    });
+    promos.push({
+      id: uid(),
+      name: "Geo Promo",
+      conditions: "2-5% off, combinable with all live offers, " + names.map((n) => n.slice(0, 2).toUpperCase()).join("/"),
+      body: "Apply a small combinable geo discount on " + names.join(", ") + ". " + shares + ".",
+    });
+  }
+
+  if (weekdays.length) {
+    recs.push({
+      id: uid(),
+      label: "Weekday Mix",
+      body: "Target " + weekdays.map((w) => w.day).join(" and ") + " check-ins with day-conditioned offers. Hotel mix is " +
+        weekdays.map((w) => w.hotel + "% vs " + w.target + "%").join(" and ") + ".",
+    });
+    if (!promos.some((p) => p.name === "Long Stay")) {
+      promos.push({
+        id: uid(),
+        name: "Long Stay",
+        conditions: weekdays.map((w) => w.day).join("/") + " check-in boost, combinable",
+        body: "Weight Long Stay toward " + weekdays.map((w) => w.day + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
+      });
+    } else {
+      const ls = promos.find((p) => p.name === "Long Stay");
+      ls.conditions += ", " + weekdays.map((w) => w.day).join("/") + " check-in boost";
+      ls.body += " " + weekdays.map((w) => w.day).join(" and ") + " sit at " + weekdays.map((w) => w.hotel + "% vs " + w.target + "%").join(" and ") + ".";
+    }
+  }
+
+  if (cancel && cancel >= 40) {
+    promos.push({
+      id: uid(),
+      name: "Opaque",
+      conditions: "NR, stacked on live offers, priority on high-cancel sources",
+      body: (live.opaque ? "Tighten NR/Opaque conditions on the live stack" : "Add Opaque / NR conditions") +
+        " for high-cancel sources. Cancellation rate is " + cancel + "%.",
+    });
+  }
+
+  if (!recs.length) warnings.push("No clear gaps were extracted automatically. Add recommendations by hand, or check the deck format.");
+  return {
+    hotelName: parsed.hotelName, city: parsed.city, auditDate: parsed.auditDate,
+    contractType: parsed.contractType, channel: parsed.channel, commission: parsed.commission,
+    recommendations: recs, promos, warnings,
+  };
+}
+
+function show(phase) {
+  state.phase = phase;
+  ["idle","parsed","analyzing","editing"].forEach((p) => {
+    document.getElementById("view-" + p).classList.toggle("hidden", p !== phase);
+  });
+  document.getElementById("dock").classList.toggle("hidden", phase !== "editing");
+}
+
+function badge(text, cls) {
+  return '<span class="badge ' + (cls || "") + '">' + escapeHtml(text) + "</span>";
+}
+function estimateFit(lines) {
+  const est = lines.reduce((n, t) => n + Math.max(1, Math.ceil(t.length / 92)), 0);
+  if (est > 11) return { text: "May overflow the box", cls: "warn" };
+  if (est > 7) return { text: "Tight fit", cls: "muted" };
+  return { text: "Fits the box", cls: "ok" };
+}
+
+function renderEditor() {
+  const d = state.draft;
+  document.getElementById("edit-hotel").textContent = d.hotelName;
+  document.getElementById("edit-badges").innerHTML =
+    (d.city ? badge(d.city) : "") +
+    (d.auditDate ? badge(d.auditDate, "muted") : "") +
+    (d.contractType ? badge(d.contractType, "muted") : "");
+  const w = document.getElementById("warnings");
+  if (d.warnings.length) {
+    w.classList.remove("hidden");
+    w.innerHTML = "<p style='font-weight:500'>Notes from the draft</p><ul style='margin:.35rem 0 0 1.1rem'>" +
+      d.warnings.map((x) => "<li>" + escapeHtml(x) + "</li>").join("") + "</ul>";
+  } else w.classList.add("hidden");
+
+  const recFit = estimateFit(d.recommendations.map(formatRecommendation));
+  const promoFit = estimateFit(d.promos.map(formatPromo));
+  const fr = document.getElementById("fit-rec");
+  const fp = document.getElementById("fit-promo");
+  fr.textContent = recFit.text; fr.className = "badge " + recFit.cls;
+  fp.textContent = promoFit.text; fp.className = "badge " + promoFit.cls;
+
+  document.getElementById("rec-list").innerHTML = d.recommendations.map((item, i) => `
+    <article class="item" data-id="${item.id}">
+      <div class="item-bar">
+        <input value="${escapeHtml(item.label)}" data-k="label" placeholder="Label" style="max-width:14rem;font-weight:500" />
+        <span style="margin-left:auto;display:flex">
+          <button class="iconbtn" data-act="up" ${i===0?"disabled":""} title="Move up">↑</button>
+          <button class="iconbtn" data-act="down" ${i===d.recommendations.length-1?"disabled":""} title="Move down">↓</button>
+          <button class="iconbtn" data-act="del" title="Remove">✕</button>
+        </span>
+      </div>
+      <textarea data-k="body" placeholder="Concrete action. Motivation with a figure from the audit.">${escapeHtml(item.body)}</textarea>
+    </article>`).join("");
+
+  document.getElementById("promo-list").innerHTML = d.promos.map((item, i) => `
+    <article class="item" data-id="${item.id}">
+      <div class="item-bar" style="flex-wrap:wrap">
+        <select data-k="name">${PROMO_NAMES.map((n) => `<option ${n===item.name?"selected":""}>${n}</option>`).join("")}</select>
+        <input value="${escapeHtml(item.conditions)}" data-k="conditions" placeholder="Key conditions (NR, 12% off, 0-5 days)" style="flex:1;min-width:10rem" />
+        <span style="display:flex">
+          <button class="iconbtn" data-act="up" ${i===0?"disabled":""} title="Move up">↑</button>
+          <button class="iconbtn" data-act="down" ${i===d.promos.length-1?"disabled":""} title="Move down">↓</button>
+          <button class="iconbtn" data-act="del" title="Remove">✕</button>
+        </span>
+      </div>
+      <textarea data-k="body" placeholder="Description. Rationale with a figure from the audit.">${escapeHtml(item.body)}</textarea>
+    </article>`).join("");
+
+  const recs = d.recommendations.filter((r) => r.label.trim() || r.body.trim());
+  const promos = d.promos.filter((p) => p.name.trim() || p.body.trim());
+  function card(title, items) {
+    return `<div class="preview-card"><div class="bar"></div><div class="preview-body">
+      <p style="font-size:11px;font-weight:600;color:var(--accent)">${title}</p>
+      <ul>${items.length ? items.map((item) => {
+        const idx = item.indexOf(": ");
+        const label = idx > 0 ? item.slice(0, idx + 1) : "";
+        const rest = idx > 0 ? item.slice(idx + 1) : item;
+        return `<li>• <strong>${escapeHtml(label)}</strong>${escapeHtml(rest)}</li>`;
+      }).join("") : `<li style="color:var(--slide-line);font-style:italic">[ Add content here ]</li>`}</ul>
+    </div></div>`;
+  }
+  document.getElementById("slide-preview").innerHTML = `
+    <div style="display:flex;align-items:center;gap:.5rem">
+      <span style="width:1.25rem;height:1.25rem;border-radius:2px;background:var(--accent);color:#fff;font-size:9px;font-weight:600;display:grid;place-items:center">${state.parsed?.nextStepsSlideIndex || ""}</span>
+      <span style="font-size:11px;font-weight:500;color:var(--accent)">Next Steps</span>
+    </div>
+    <h3 style="margin-top:.5rem;font-size:1.05rem;color:var(--slide-ink)">Next Steps</h3>
+    <p style="font-size:11px;color:var(--slide-muted);margin:.15rem 0 .5rem">Action items and recommendations following this audit</p>
+    <div style="display:grid;grid-template-rows:1fr 1fr;gap:.5rem;flex:1;min-height:0">
+      ${card("Strategic Recommendations", recs.map(formatRecommendation))}
+      ${card("Suggested Promos", promos.map(formatPromo))}
+    </div>`;
+  document.getElementById("dock-name").textContent = completedFileName(d.hotelName, state.fileName);
+  queueDownload();
+}
+
+function moveItem(list, id, dir) {
+  const i = list.findIndex((x) => x.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= list.length) return list;
+  const next = list.slice();
+  const tmp = next[i]; next[i] = next[j]; next[j] = tmp;
+  return next;
+}
+
+let dlTimer = null;
+function queueDownload() {
+  state.ready = false;
+  const btn = document.getElementById("btn-download");
+  btn.disabled = true;
+  btn.textContent = "Preparing file…";
+  if (state.downloadUrl) { URL.revokeObjectURL(state.downloadUrl); state.downloadUrl = null; }
+  clearTimeout(dlTimer);
+  dlTimer = setTimeout(async () => {
+    try {
+      if (!state.fileBytes || !state.draft) return;
+      const bytes = await writeCompletedPptx(state.fileBytes, state.draft);
+      const copy = new Uint8Array(bytes.byteLength);
+      copy.set(bytes);
+      const blob = new Blob([copy], { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" });
+      state.downloadUrl = URL.createObjectURL(blob);
+      state.downloadName = completedFileName(state.draft.hotelName, state.fileName);
+      state.ready = true;
+      btn.disabled = false;
+      btn.textContent = "Download PPTX";
+    } catch (err) {
+      btn.disabled = true;
+      btn.textContent = "Could not write file";
+      console.error(err);
+    }
+  }, 280);
+}
+
+async function ingest(file) {
+  if (!file || !file.name.toLowerCase().endsWith(".pptx")) {
+    state.error = "Please drop a .pptx audit deck.";
+    document.getElementById("idle-error").textContent = state.error;
+    document.getElementById("idle-error").classList.remove("hidden");
+    return;
+  }
+  try {
+    const buf = await file.arrayBuffer();
+    const parsed = await parseAuditPptx(buf, file.name);
+    state.fileName = file.name;
+    state.fileBytes = buf;
+    state.parsed = parsed;
+    state.error = "";
+    document.getElementById("parsed-hotel").textContent = parsed.hotelName;
+    document.getElementById("parsed-file").textContent = file.name;
+    document.getElementById("parsed-badges").innerHTML =
+      (parsed.city ? badge(parsed.city) : "") +
+      (parsed.auditDate ? badge(parsed.auditDate, "muted") : "") +
+      (parsed.contractType ? badge(parsed.contractType, "muted") : "") +
+      (parsed.channel ? badge(parsed.channel, "muted") : "") +
+      (parsed.commission ? badge(parsed.commission, "muted") : "") +
+      badge(parsed.slideCount + " slides", "muted");
+    document.getElementById("parsed-note").textContent =
+      "Next Steps is slide " + parsed.nextStepsSlideIndex + ". The draft will fill Strategic Recommendations and Suggested Promos only. You can edit every line before downloading.";
+    document.getElementById("parsed-error").classList.add("hidden");
+    show("parsed");
+  } catch (err) {
+    state.error = err.message || "Could not read that deck.";
+    document.getElementById("idle-error").textContent = state.error;
+    document.getElementById("idle-error").classList.remove("hidden");
+  }
+}
+
+function draftNow() {
+  if (!state.parsed) return;
+  show("analyzing");
+  document.getElementById("analyzing-note").textContent = "Reading " + state.parsed.slideCount + " slides and writing recommendations from the yield rules.";
+  setTimeout(() => {
+    state.draft = draftFromAudit(state.parsed);
+    renderEditor();
+    show("editing");
+  }, 400);
+}
+
+function reset() {
+  if (state.downloadUrl) URL.revokeObjectURL(state.downloadUrl);
+  state.phase = "idle";
+  state.fileName = "";
+  state.fileBytes = null;
+  state.parsed = null;
+  state.draft = null;
+  state.error = "";
+  state.downloadUrl = null;
+  state.ready = false;
+  document.getElementById("idle-error").classList.add("hidden");
+  show("idle");
+}
+
+const drop = document.getElementById("dropzone");
+const fileInput = document.getElementById("file");
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("drag"); ingest(e.dataTransfer.files[0]); });
+fileInput.addEventListener("change", (e) => { ingest(e.target.files[0]); e.target.value = ""; });
+document.getElementById("btn-draft").addEventListener("click", draftNow);
+document.getElementById("btn-another").addEventListener("click", reset);
+document.getElementById("btn-new").addEventListener("click", reset);
+document.getElementById("btn-redraft").addEventListener("click", draftNow);
+document.getElementById("btn-add-rec").addEventListener("click", () => {
+  state.draft.recommendations.push({ id: uid(), label: "", body: "" });
+  renderEditor();
+});
+document.getElementById("btn-add-promo").addEventListener("click", () => {
+  state.draft.promos.push({ id: uid(), name: "Flash Sale", conditions: "", body: "" });
+  renderEditor();
+});
+function bindList(el, key) {
+  el.addEventListener("input", (e) => {
+    const art = e.target.closest("[data-id]");
+    if (!art) return;
+    const item = state.draft[key].find((x) => x.id === art.dataset.id);
+    if (!item) return;
+    const k = e.target.dataset.k;
+    if (k) item[k] = e.target.value;
+    queueDownload();
+  });
+  el.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const art = btn.closest("[data-id]");
+    const id = art.dataset.id;
+    const act = btn.dataset.act;
+    if (act === "del") state.draft[key] = state.draft[key].filter((x) => x.id !== id);
+    if (act === "up") state.draft[key] = moveItem(state.draft[key], id, -1);
+    if (act === "down") state.draft[key] = moveItem(state.draft[key], id, 1);
+    renderEditor();
+  });
+}
+bindList(document.getElementById("rec-list"), "recommendations");
+bindList(document.getElementById("promo-list"), "promos");
+document.getElementById("btn-download").addEventListener("click", () => {
+  if (!state.ready || !state.downloadUrl) return;
+  const a = document.createElement("a");
+  a.href = state.downloadUrl;
+  a.download = state.downloadName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
+</script>
+</body>
+</html>
