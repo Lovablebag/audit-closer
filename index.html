@@ -118,7 +118,7 @@
     .fields { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
     .field { display: grid; gap: .2rem; min-width: 0; }
     .field.span2 { grid-column: 1 / -1; }
-    .flab { font-size: 11px; font-weight: 500; color: var(--muted); }
+    .flab em { font-style: normal; font-weight: 400; color: var(--faint); }
     .inline { display: flex; align-items: center; gap: .45rem; font-size: 13px; }
     .inline input[type="checkbox"] { width: auto; accent-color: var(--accent); }
     .chips { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
@@ -259,7 +259,7 @@ const PROMO_NAMES = ["Early Booking","Last Minute","Flash Sale","Long Stay","Geo
 const AMP = "&", LT = "<", GT = ">", QUOT = '"';
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const CANCEL_OPTS = ["", "NRF", "NR", "Flexible"];
-const WINDOW_OPTS = ["", "1-5 days", "1-15 days", "6-15 days", "short-term", "31-60 days", "61-90 days", "91-120 days", "121+ days", "181+ days"];
+const WINDOW_OPTS = ["0-5 days", "1-5 days", "1-15 days", "6-15 days", "short-term", "31-60 days", "61-90 days", "91-120 days", "121+ days", "181+ days"];
 const MARKETS = [
   { name: "United States", iso: "US" },
   { name: "United Kingdom", iso: "GB" },
@@ -294,6 +294,7 @@ const MARKETS = [
   { name: "India", iso: "IN" },
 ];
 const MARKET_BY_NAME = Object.fromEntries(MARKETS.map((m) => [m.name.toLowerCase(), m]));
+const MARKET_BY_ISO = Object.fromEntries(MARKETS.map((m) => [m.iso, m]));
 MARKET_BY_NAME.uae = MARKETS.find((m) => m.iso === "AE");
 MARKET_BY_NAME.saudi = MARKETS.find((m) => m.iso === "SA");
 MARKET_BY_NAME.korea = MARKETS.find((m) => m.iso === "KR");
@@ -303,8 +304,26 @@ MARKET_BY_NAME.uk = MARKETS.find((m) => m.iso === "GB");
 MARKET_BY_NAME.usa = MARKETS.find((m) => m.iso === "US");
 
 function isoFor(name) {
-  const hit = MARKET_BY_NAME[String(name || "").toLowerCase()];
+  const raw = String(name || "").trim();
+  if (!raw) return "";
+  if (MARKET_BY_ISO[raw.toUpperCase()]) return raw.toUpperCase();
+  const hit = MARKET_BY_NAME[raw.toLowerCase()];
   return hit ? hit.iso : "";
+}
+
+function parseMarketToken(t) {
+  const s = String(t || "").trim();
+  if (!s) return "";
+  return isoFor(s) || s.toUpperCase();
+}
+
+function addMarketsFromText(item, raw) {
+  const parts = String(raw || "").split(/[\/,;]+/).map((p) => p.trim()).filter(Boolean);
+  if (!item.markets) item.markets = [];
+  for (const p of parts) {
+    const code = parseMarketToken(p);
+    if (code && !item.markets.includes(code)) item.markets.push(code);
+  }
 }
 
 function makePromo(fields) {
@@ -322,6 +341,7 @@ function makePromo(fields) {
     weekdays: [],
     tiers: [],
     extra: "",
+    weekdayCustom: "",
     body: "",
   }, fields || {});
 }
@@ -335,14 +355,12 @@ function compileConditions(p) {
   } else if (String(p.discount || "").trim()) {
     bits.push((p.discountMin ? "min " : "") + String(p.discount).trim() + "% off");
   }
-  if (p.bookingWindow) {
-    const w = String(p.bookingWindow).trim();
-    bits.push(/day|short|term|window/i.test(w) ? w : "booking window " + w);
-  }
+  if (p.bookingWindow) bits.push(String(p.bookingWindow).trim());
   if (p.oneNight) bits.push("1N eligible");
   if (p.combinable) bits.push(p.combinableWith ? "combinable with " + p.combinableWith : "combinable");
   if (p.markets && p.markets.length) bits.push(p.markets.join("/"));
   if (p.weekdays && p.weekdays.length) bits.push(p.weekdays.join("/") + " check-in");
+  if (p.weekdayCustom) bits.push(p.weekdayCustom);
   if (p.extra) bits.push(p.extra);
   return bits.filter(Boolean).join(", ");
 }
@@ -871,19 +889,14 @@ function applyTypeDefaults(p) {
   }
 }
 
-function optionList(opts, selected) {
-  return opts.map((o) => {
-    const val = o;
-    const label = o || "—";
-    return `<option value="${escapeHtml(val)}" ${val === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
-  }).join("");
+function comboInput(listId, k, value, opts, placeholder) {
+  return `<input data-k="${k}" list="${listId}" value="${escapeHtml(value || "")}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" />
+    <datalist id="${listId}">${opts.filter(Boolean).map((o) => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>`;
 }
 
 function promoCardHtml(item, i, total) {
   const cond = compileConditions(item);
   const unusedMarkets = MARKETS.filter((m) => !(item.markets || []).includes(m.iso));
-  const windowCustom = item.bookingWindow && !WINDOW_OPTS.includes(item.bookingWindow);
-  const windowOpts = windowCustom ? WINDOW_OPTS.concat([item.bookingWindow]) : WINDOW_OPTS;
   return `
     <article class="item" data-id="${item.id}">
       <div class="item-bar">
@@ -895,29 +908,36 @@ function promoCardHtml(item, i, total) {
         </span>
       </div>
       <div class="fields">
-        <label class="field"><span class="flab">Cancellation</span>
-          <select data-k="cancelPolicy">${optionList(CANCEL_OPTS, item.cancelPolicy || "")}</select>
+        <label class="field"><span class="flab">Cancellation <em>pick or type</em></span>
+          ${comboInput("can-" + item.id, "cancelPolicy", item.cancelPolicy, CANCEL_OPTS, "NRF, NR, Flexible, …")}
         </label>
-        <label class="field"><span class="flab">Discount %</span>
+        <label class="field"><span class="flab">Discount % <em>any value</em></span>
           <div class="inline">
-            <input data-k="discount" value="${escapeHtml(item.discount)}" placeholder="12" />
+            <input data-k="discount" value="${escapeHtml(item.discount)}" placeholder="12 or 0-5" />
             <label class="inline" title="Prefix with min"><input type="checkbox" data-k="discountMin" ${item.discountMin?"checked":""}/> min</label>
           </div>
         </label>
-        <label class="field"><span class="flab">Booking window</span>
-          <select data-k="bookingWindow">${optionList(windowOpts, item.bookingWindow || "")}</select>
+        <label class="field"><span class="flab">Booking window <em>pick or type</em></span>
+          ${comboInput("win-" + item.id, "bookingWindow", item.bookingWindow, WINDOW_OPTS, "0-5 days, from 0 to 5, …")}
         </label>
-        <label class="field"><span class="flab">Combinable with</span>
+        <label class="field"><span class="flab">Combinable with <em>pick or type</em></span>
           <div class="inline">
             <input type="checkbox" data-k="combinable" ${item.combinable?"checked":""}/>
-            <input data-k="combinableWith" value="${escapeHtml(item.combinableWith)}" placeholder="all live offers" ${item.combinable?"":"disabled"} />
+            <input data-k="combinableWith" list="comb-${item.id}" value="${escapeHtml(item.combinableWith)}" placeholder="all live offers" ${item.combinable?"":"disabled"} autocomplete="off" />
+            <datalist id="comb-${item.id}">
+              <option value="all live offers"></option>
+              <option value="Opaque"></option>
+              <option value="live offers"></option>
+              <option value="Flash Sale"></option>
+              <option value="Long Stay"></option>
+            </datalist>
           </div>
         </label>
         <div class="field span2">
-          <span class="flab">LOS tiers</span>
+          <span class="flab">LOS tiers <em>any nights / %</em></span>
           ${(item.tiers && item.tiers.length ? item.tiers : []).map((t, ti) => `
             <div class="tierrow">
-              <input class="wide" data-k="tierNights" data-i="${ti}" value="${escapeHtml(t.nights)}" placeholder="1N" />
+              <input class="wide" data-k="tierNights" data-i="${ti}" value="${escapeHtml(t.nights)}" placeholder="1N or 0-1N" />
               <input data-k="tierPct" data-i="${ti}" value="${escapeHtml(t.pct)}" placeholder="8" />
               <span class="muted">%</span>
               <button class="iconbtn" data-act="deltier" data-i="${ti}" title="Remove tier">✕</button>
@@ -925,26 +945,28 @@ function promoCardHtml(item, i, total) {
           <button class="btn ghost sm" data-act="addtier" type="button">+ Add tier</button>
         </div>
         <div class="field span2">
-          <span class="flab">Source markets (ISO)</span>
+          <span class="flab">Source markets <em>ISO list or type</em></span>
           <div class="chips">
             ${(item.markets || []).map((iso) => `<button type="button" class="chip on" data-act="unmarket" data-iso="${escapeHtml(iso)}">${escapeHtml(iso)} ×</button>`).join("")}
             <select data-act="addmarket" class="slim">
               <option value="">Add market</option>
               ${unusedMarkets.map((m) => `<option value="${m.iso}">${m.iso} · ${escapeHtml(m.name)}</option>`).join("")}
             </select>
+            <input data-k="marketTyped" placeholder="or type DE, AT, 0-5…" style="max-width:11rem" />
           </div>
         </div>
         <div class="field span2">
-          <span class="flab">Check-in days</span>
+          <span class="flab">Check-in days <em>chips or type</em></span>
           <div class="chips">
             ${DAYS.map((day) => `<button type="button" class="chip ${(item.weekdays||[]).includes(day)?"on":""}" data-act="day" data-day="${day}">${day.slice(0,3)}</button>`).join("")}
           </div>
+          <input data-k="weekdayCustom" value="${escapeHtml(item.weekdayCustom || "")}" placeholder="or type, e.g. weekend / Tue-Thu" />
         </div>
         <label class="field"><span class="flab">Flags</span>
           <label class="inline"><input type="checkbox" data-k="oneNight" ${item.oneNight?"checked":""}/> 1N eligible</label>
         </label>
-        <label class="field"><span class="flab">Extra condition</span>
-          <input data-k="extra" value="${escapeHtml(item.extra)}" placeholder="short-term, stacked, …" />
+        <label class="field"><span class="flab">Extra condition <em>free text</em></span>
+          <input data-k="extra" value="${escapeHtml(item.extra)}" placeholder="short-term, stacked, from 0 to 5, …" />
         </label>
         <label class="field span2"><span class="flab">Rationale</span>
           <textarea data-k="body" placeholder="Why this promo. Use a figure from the audit.">${escapeHtml(item.body)}</textarea>
@@ -1160,6 +1182,7 @@ function bindList(el, key) {
     if (!item) return;
     const k = e.target.dataset.k;
     if (!k) return;
+    if (k === "marketTyped") return;
     if (k === "discountMin" || k === "oneNight" || k === "combinable") item[k] = e.target.checked;
     else if (k === "tierNights" || k === "tierPct") {
       const i = Number(e.target.dataset.i);
@@ -1186,6 +1209,18 @@ function bindList(el, key) {
       applyTypeDefaults(item);
       renderEditor();
     }
+  });
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || key !== "promos") return;
+    if (e.target.dataset.k !== "marketTyped") return;
+    e.preventDefault();
+    const art = e.target.closest("[data-id]");
+    if (!art) return;
+    const item = state.draft.promos.find((x) => x.id === art.dataset.id);
+    if (!item) return;
+    addMarketsFromText(item, e.target.value);
+    e.target.value = "";
+    renderEditor();
   });
   el.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-act]");
