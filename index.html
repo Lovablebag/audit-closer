@@ -259,7 +259,7 @@ const PROMO_NAMES = ["Early Booking","Last Minute","Flash Sale","Long Stay","Geo
 const AMP = "&", LT = "<", GT = ">", QUOT = '"';
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const CANCEL_OPTS = ["", "NRF", "NR", "Flexible"];
-const WINDOW_OPTS = ["0-5 days", "1-5 days", "1-15 days", "6-15 days", "short-term", "31-60 days", "61-90 days", "91-120 days", "121+ days", "181+ days"];
+const WINDOW_OPTS = ["0-5 days", "0-15 days", "1-5 days", "1-15 days", "6-15 days", "16-30 days", "short-term", "31+ days", "31-60 days", "61-90 days", "91-120 days", "121+ days", "181+ days"];
 const MARKETS = [
   { name: "United States", iso: "US" },
   { name: "United Kingdom", iso: "GB" },
@@ -394,6 +394,9 @@ function sanitizeBody(s) {
     .replace(/\brevenue at risk\b/gi, "lost revenue")
     .replace(/\bat risk\b/gi, "lost")
     .replace(/\bRadar\s+\d+\s*\/\s*100\b/gi, "")
+    .replace(/\bthreshold:?\s*B2B\s*<=\s*-?10%/gi, "distribution margin")
+    .replace(/\bB2B\s*<=\s*-?10%/gi, "distribution margin")
+    .replace(/\bthreshold\b/gi, "distribution margin")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -622,31 +625,217 @@ function nums(s) {
 function has(t, re) { return re.test(t); }
 function liveOffers(t) {
   return {
-    flash: /flash sale/i.test(t),
-    lastMinute: /last minute/i.test(t),
-    early: /early booking/i.test(t),
-    longStay: /long stay/i.test(t),
-    geo: /geo promo/i.test(t),
-    opaque: /opaque/i.test(t),
+    "Flash Sale": /flash sale/i.test(t),
+    "Last Minute": /last minute/i.test(t),
+    "Early Booking": /early booking|early bird/i.test(t),
+    "Long Stay": /long stay/i.test(t),
+    "Geo Promo": /geo promo/i.test(t),
+    "Opaque": /\bopaque\b/i.test(t),
   };
 }
 function countMatch(t, re) {
   const m = t.match(re);
   return m ? Number(m[1]) : null;
 }
+function uniq(arr) { return (arr || []).filter((v, i, a) => a.indexOf(v) === i); }
+function fmtSignedPct(n) {
+  if (n == null || isNaN(n)) return "";
+  return (n > 0 ? "+" : "") + n + "%";
+}
+function slideBlob(parsed, re, fallback) {
+  const s = (parsed.slides || []).find((x) => re.test(x.heading) || re.test((x.text || "").slice(0, 160)));
+  return s ? s.text : (fallback || parsed.auditText);
+}
+function analysisText(parsed) {
+  const slides = (parsed.slides || []).filter((s) => !/price check/i.test(s.heading));
+  const chart = (parsed.charts || []).map((c) => "Chart " + c.index + ": " + c.values).join("\n");
+  const body = slides.length ? slides.map((s) => s.text).join("\n") : parsed.auditText;
+  return body + "\n" + chart;
+}
+function parseLooseDate(s) {
+  if (!s) return null;
+  const iso = String(s).match(/(\d{4}-\d{2}-\d{2})/);
+  if (iso) {
+    const d = new Date(iso[1] + "T00:00:00");
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const m = String(s).match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+  if (!m) return null;
+  const months = { january:0,february:1,march:2,april:3,may:4,june:5,july:6,august:7,september:8,october:9,november:10,december:11 };
+  const mi = months[m[2].toLowerCase()];
+  if (mi == null) return null;
+  return new Date(Number(m[3]), mi, Number(m[1]));
+}
+function leadDays(a, b) {
+  if (!a || !b) return null;
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+function periodFromLead(days) {
+  if (days == null) return "";
+  if (days <= 15) return "short";
+  if (days <= 30) return "medium";
+  return "long";
+}
+function periodPhrase(periods) {
+  const p = sortPeriods(periods);
+  if (!p.length) return "";
+  if (p.length === 1) return p[0] + " term";
+  if (p.length === 2) return p[0] + " and " + p[1] + " terms";
+  return p[0] + ", " + p[1] + " and " + p[2] + " terms";
+}
+function periodsIn(s) {
+  const head = String(s).split(/comes from offer|Flash Sale|Long Stay|Early Booking|Last Minute|Geo Promo|Opaque/i)[0];
+  const out = [];
+  if (/\bshort\b/i.test(head)) out.push("short");
+  if (/\bmedium\b/i.test(head)) out.push("medium");
+  if (/\blong\b/i.test(head)) out.push("long");
+  return out;
+}
+function sortPeriods(periods) {
+  const order = ["short", "medium", "long"];
+  return uniq(periods).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+}
+function offersIn(s) {
+  return PROMO_NAMES.filter((n) => new RegExp("\\b" + n.replace(/ /g, "\\s+") + "\\b", "i").test(s));
+}
+function windowForPeriod(period) {
+  if (period === "short") return "0-15 days";
+  if (period === "medium") return "16-30 days";
+  return "31+ days";
+}
+function defaultOfferFor(period) {
+  if (period === "short") return "Last Minute";
+  if (period === "medium") return "Flash Sale";
+  return "Early Booking";
+}
+
+const DIST_MARGIN = -10;
+const AVAIL_MAX_SHARE = 0.10;
+const WEEKDAY_OFFER_MIN = 0.60;
+
+function analyzePriceCheck(parsed) {
+  const t = slideBlob(parsed, /price check/i, parsed.auditText);
+  const auditDate = parseLooseDate(parsed.auditDate);
+  const rows = [];
+  const re = /(\d{4}-\d{2}-\d{2})\s*\|\s*(\d+)\s*\|[^|]*\|\s*EUR\s*([\d.]+)\s*\|\s*EUR\s*([\d.]+)\s*\|\s*EUR\s*([\d.]+)\s*\|\s*([+-]?\d+(?:\.\d+)?)%\s*\|\s*([+-]?\d+(?:\.\d+)?)%\s*\|[^|]*\|[^|]*\|\s*([^|]+)/gi;
+  let m;
+  while ((m = re.exec(t))) {
+    const checkIn = parseLooseDate(m[1]);
+    const lead = leadDays(auditDate, checkIn);
+    rows.push({
+      date: m[1],
+      nts: Number(m[2]),
+      g2: Number(m[3]),
+      b2b: Number(m[4]),
+      pctB2B: Number(m[6]),
+      offer: String(m[8] || "").replace(/\s+/g, " ").trim(),
+      lead,
+      period: periodFromLead(lead),
+    });
+  }
+  const parts = t.split("|").map((s) => s.trim()).filter(Boolean);
+  const flags = parts.filter((p) => /^[!¡iv]\s+/i.test(p) || /^not competitive vs B2B/i.test(p) || /^best rate for/i.test(p));
+  const notCompFlags = flags.filter((f) => /not competitive vs B2B/i.test(f));
+  const bestRateFlags = flags.filter((f) => /best rate for/i.test(f));
+
+  const byPeriod = { short: [], medium: [], long: [] };
+  for (const r of rows) {
+    if (!r.period) continue;
+    if (r.lead != null && r.lead < 0) continue;
+    byPeriod[r.period].push(r);
+  }
+
+  const weak = [];
+  for (const f of notCompFlags) {
+    for (const p of periodsIn(f)) if (!weak.includes(p)) weak.push(p);
+  }
+  for (const p of ["short", "medium", "long"]) {
+    if (byPeriod[p].some((r) => r.pctB2B > DIST_MARGIN) && !weak.includes(p)) weak.push(p);
+  }
+
+  const covering = { short: [], medium: [], long: [] };
+  for (const f of bestRateFlags) {
+    const names = offersIn(f);
+    for (const p of periodsIn(f)) covering[p] = uniq(covering[p].concat(names));
+  }
+  for (const p of ["short", "medium", "long"]) {
+    for (const r of byPeriod[p]) covering[p] = uniq(covering[p].concat(offersIn(r.offer)));
+  }
+
+  const extras = [];
+  if (notCompFlags.some((f) => /no mark-up/i.test(f))) extras.push("Includes no mark-up rooms");
+  if (flags.some((f) => /pending confirmation/i.test(f))) extras.push("A loaded rate is still pending hotel confirmation");
+
+  const worstByPeriod = {};
+  for (const p of ["short", "medium", "long"]) {
+    const failing = byPeriod[p].filter((r) => r.pctB2B > DIST_MARGIN);
+    if (failing.length) worstByPeriod[p] = failing.reduce((a, b) => (a.pctB2B > b.pctB2B ? a : b));
+  }
+
+  const scored = rows.filter((r) => r.lead == null || r.lead >= 0);
+  const nComp = scored.filter((r) => r.pctB2B <= DIST_MARGIN).length;
+  const competitiveShare = scored.length ? nComp / scored.length : 0;
+
+  const live = liveOffers(parsed.auditText);
+  const groups = [];
+  const byName = {};
+  for (const p of weak) {
+    const existing = covering[p] || [];
+    const preferredHit = ["Flash Sale", "Last Minute", "Early Booking"].find((n) => existing.includes(n));
+    let name, enhance;
+    if (preferredHit) { name = preferredHit; enhance = true; }
+    else if (existing.length) { name = existing[0]; enhance = true; }
+    else if (live[defaultOfferFor(p)]) { name = defaultOfferFor(p); enhance = true; }
+    else { name = defaultOfferFor(p); enhance = false; }
+    if (!byName[name]) {
+      byName[name] = { name, periods: [], enhance };
+      groups.push(byName[name]);
+    }
+    if (!byName[name].periods.includes(p)) byName[name].periods.push(p);
+    byName[name].enhance = byName[name].enhance || enhance;
+  }
+  for (const g of groups) g.periods = sortPeriods(g.periods);
+
+  return { rows, weak: sortPeriods(weak), covering, extras, worstByPeriod, competitiveShare, groups };
+}
+
+function upsertPromo(promos, fields) {
+  const existing = promos.find((p) => p.name === fields.name);
+  if (!existing) {
+    const p = makePromo(fields);
+    applyTypeDefaults(p);
+    promos.push(p);
+    return p;
+  }
+  if (fields.body) existing.body = (existing.body ? existing.body + " " : "") + fields.body;
+  if (fields.bookingWindow && !existing.bookingWindow) existing.bookingWindow = fields.bookingWindow;
+  if (fields.weekdays && fields.weekdays.length) existing.weekdays = uniq((existing.weekdays || []).concat(fields.weekdays));
+  if (fields.markets && fields.markets.length) existing.markets = uniq((existing.markets || []).concat(fields.markets));
+  if (fields.combinable) {
+    existing.combinable = true;
+    if (fields.combinableWith) existing.combinableWith = existing.combinableWith || fields.combinableWith;
+  }
+  if (fields.oneNight) existing.oneNight = true;
+  if (fields.tiers && fields.tiers.length && !(existing.tiers && existing.tiers.length)) existing.tiers = fields.tiers;
+  if (fields.cancelPolicy && !existing.cancelPolicy) existing.cancelPolicy = fields.cancelPolicy;
+  if (fields.discount && !existing.discount) existing.discount = fields.discount;
+  if (fields.discountMin) existing.discountMin = true;
+  if (fields.extra && !existing.extra) existing.extra = fields.extra;
+  return existing;
+}
 function extractWindows(t) {
   const labels = ["1-5", "6-15", "16-30", "31-60", "61-90", "91-120", "121-180", "181"];
   const found = [];
   for (const lab of labels) {
-    const re = new RegExp(lab.replace("+", "\\+") + "[^\\n]{0,80}?(\\d+(?:\\.\\d+)?)\\s*%[^\\n]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
+    const re = new RegExp(lab.replace("+", "\\+") + "[^\\d%]{0,80}?(\\d+(?:\\.\\d+)?)\\s*%[^\\d%]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
     const m = t.match(re);
     if (m) found.push({ label: lab === "181" ? "181+" : lab + (lab.includes("-") ? " days" : ""), hotel: Number(m[1]), target: Number(m[2]) });
   }
   return found.filter((w) => w.hotel + 1 < w.target);
 }
 function extractLOS(t) {
-  const m = t.match(/1\s*N(?:ight)?[^%\n]{0,40}(\d+(?:\.\d+)?)\s*%[^%\n]{0,40}(\d+(?:\.\d+)?)\s*%/i)
-    || t.match(/1-night[^%\n]{0,40}(\d+(?:\.\d+)?)\s*%[^%\n]{0,40}(\d+(?:\.\d+)?)\s*%/i);
+  const m = t.match(/1\s*N(?:ight)?[^\d%]{0,40}?(\d+(?:\.\d+)?)\s*%[^\d%]{0,40}?(\d+(?:\.\d+)?)\s*%/i)
+    || t.match(/1-night[^\d%]{0,40}?(\d+(?:\.\d+)?)\s*%[^\d%]{0,40}?(\d+(?:\.\d+)?)\s*%/i);
   if (m && Number(m[1]) + 1 < Number(m[2])) return { hotel: Number(m[1]), target: Number(m[2]) };
   return null;
 }
@@ -654,7 +843,7 @@ function extractWeekdays(t) {
   const days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
   const weak = [];
   for (const d of days) {
-    const re = new RegExp(d + "[^\\n%]{0,30}(\\d+(?:\\.\\d+)?)\\s*%[^\\n%]{0,30}(\\d+(?:\\.\\d+)?)\\s*%", "i");
+    const re = new RegExp("\\b" + d + "\\b[^\\d%]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%[^\\d%]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
     const m = t.match(re);
     if (m && Number(m[1]) + 1 < Number(m[2])) weak.push({ day: d, hotel: Number(m[1]), target: Number(m[2]) });
   }
@@ -677,7 +866,7 @@ function extractMarkets(t) {
   );
   for (const m of labels) {
     if (seen.has(m.iso)) continue;
-    const re = new RegExp(m.needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^\\n]{0,50}?(\\d+(?:\\.\\d+)?)\\s*%[^\\n]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
+    const re = new RegExp(m.needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^\\d%]{0,50}?(\\d+(?:\\.\\d+)?)\\s*%[^\\d%]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
     const hit = t.match(re);
     if (hit && Number(hit[1]) + 0.5 < Number(hit[2])) {
       seen.add(m.iso);
@@ -686,61 +875,69 @@ function extractMarkets(t) {
   }
   return weak;
 }
-function vsB2B(t) {
-  const hits = [...t.matchAll(/([+-]?\d+(?:\.\d+)?)\s*%[^|]{0,24}vs\.?\s*B2B/gi)];
-  if (hits.length) return hits.map((h) => Number(h[1]));
-  const alt = [...t.matchAll(/G2\s+vs\.?\s*B2B[^%\n]{0,20}([+-]?\d+(?:\.\d+)?)\s*%/gi)];
-  return alt.map((h) => Number(h[1]));
-}
-
 function draftFromAudit(parsed) {
   const t = parsed.auditText;
   const recs = [];
   const promos = [];
   const warnings = [];
   const live = liveOffers(t);
-  const b2b = vsB2B(t);
-  const worstB2B = b2b.length ? Math.max(...b2b) : null;
-  const stop = countMatch(t, /(\d+)\s+stop[-\s]?sale/i);
-  const sold = countMatch(t, /(\d+)\s+sold[-\s]?out/i);
-  const unavail = countMatch(t, /(\d+)\s+unavailable/i);
+  const price = analyzePriceCheck(parsed);
+  const allot = slideBlob(parsed, /allotment/i, t);
+  const stop = countMatch(allot, /Stop Sales:\s*(\d+)/i) || countMatch(t, /(\d+)\s+stop[-\s]?sale/i) || 0;
+  const sold = countMatch(allot, /Sold Out:\s*(\d+)/i) || countMatch(t, /(\d+)\s+sold[-\s]?out/i) || 0;
+  const unavail = countMatch(allot, /(\d+)\s*(?:\||\s)+Unavailable days/i) || countMatch(t, /(\d+)\s+unavailable days/i) || (stop + sold);
   const cancel = countMatch(t, /(\d+(?:\.\d+)?)\s*%\s*(?:cancel|cancellation)/i) || countMatch(t, /cancell(?:ation|ed)[^%\n]{0,30}(\d+(?:\.\d+)?)\s*%/i);
-  const windows = extractWindows(t);
-  const los = extractLOS(t);
-  const weekdays = extractWeekdays(t);
-  const markets = extractMarkets(t);
+  const windows = extractWindows(analysisText(parsed));
+  const los = extractLOS(analysisText(parsed));
+  const weekdays = extractWeekdays(analysisText(parsed));
+  const markets = extractMarkets(analysisText(parsed));
   const shortWindows = windows.filter((w) => /1-5|6-15/.test(w.label));
   const longWindows = windows.filter((w) => /121|181/.test(w.label));
 
-  if (worstB2B !== null && worstB2B > -10) {
-    const action = live.flash || live.longStay
-      ? "Deepen discounts on the live Flash Sale and Long Stay offers until B2B reaches <= -10% on every term."
-      : "Create a new promo with a discount large enough to put G2 at B2B <= -10% on every term.";
-    recs.push({ id: uid(), label: "Competitiveness", body: action + " Current G2 vs B2B includes " + worstB2B + "%." });
-    if (live.flash) {
-      promos.push(makePromo({
-        name: "Flash Sale", cancelPolicy: "NRF", discount: "12", discountMin: true,
-        bookingWindow: "short-term", combinable: true,
-        body: "Strengthen the live Flash Sale so short-term G2 clears B2B <= -10%. Current position includes " + worstB2B + "% vs B2B.",
-      }));
-    } else {
-      promos.push(makePromo({
-        name: "Flash Sale", cancelPolicy: "NRF", discount: "12", discountMin: true,
-        bookingWindow: "short-term", combinable: true,
-        body: "Launch a Flash Sale large enough to push short-term G2 to B2B <= -10%. Current position includes " + worstB2B + "% vs B2B.",
-      }));
+  if (price.weak.length) {
+    const phrase = periodPhrase(price.weak);
+    const figures = price.weak.map((p) => {
+      const w = price.worstByPeriod[p];
+      return w ? (p + " term " + fmtSignedPct(w.pctB2B) + " vs B2B") : "";
+    }).filter(Boolean).join(", ");
+    let body = "Push G2 past distribution margin on " + phrase + ", by deepening live offers or combining them.";
+    if (figures) body += " Current position: " + figures + ".";
+    if (price.extras.length) body += " " + price.extras.map((e) => String(e).replace(/\.$/, "")).join(". ") + ".";
+    recs.push({ id: uid(), label: "Competitiveness", body });
+
+    for (const g of price.groups) {
+      const fig = g.periods.map((p) => {
+        const w = price.worstByPeriod[p];
+        return w ? (p + " " + fmtSignedPct(w.pctB2B) + " vs B2B") : "";
+      }).filter(Boolean).join(", ");
+      const verb = g.enhance ? "Enhance the live " + g.name : "Launch a " + g.name;
+      const fields = {
+        name: g.name,
+        combinable: true,
+        combinableWith: "all live offers",
+        bookingWindow: g.periods.length === 1 ? windowForPeriod(g.periods[0]) : periodPhrase(g.periods),
+        body: verb + " covering " + periodPhrase(g.periods) + " so G2 exceeds distribution margin. " +
+          (fig ? "Current position: " + fig + ". " : "") +
+          (g.enhance ? "Best rate on those terms currently comes from this offer." : "Use it alone or stacked with other live offers."),
+      };
+      if (g.name === "Last Minute") { fields.cancelPolicy = "NRF"; fields.discount = "12"; fields.oneNight = true; }
+      if (g.name === "Flash Sale") { fields.cancelPolicy = "NRF"; fields.discount = "12"; fields.discountMin = true; }
+      if (g.name === "Early Booking") { fields.cancelPolicy = "NRF"; fields.discount = "10"; }
+      if (g.name === "Long Stay") {
+        fields.tiers = [{ nights: "1N", pct: "8" }, { nights: "2N", pct: "10" }, { nights: "3N+", pct: "12" }];
+      }
+      upsertPromo(promos, fields);
     }
   }
 
-  const stopN = stop || 0, soldN = sold || 0, unN = unavail || (stopN + soldN);
-  if (stopN || soldN || unN) {
+  if (unavail > 90 * AVAIL_MAX_SHARE) {
     const bits = [];
-    if (stopN) bits.push("Re-open the " + stopN + " stop-sale days");
-    if (soldN) bits.push("check top-up allotment on the " + soldN + " sold-out days");
+    if (stop) bits.push("Re-open the " + stop + " stop-sale days");
+    if (sold) bits.push("check top-up allotment on the " + sold + " sold-out days");
     recs.push({
       id: uid(),
       label: "Availability & Set-up",
-      body: (bits.join(" and ") || "Review blocked inventory") + ". " + (unN ? unN + " unavailable days are blocking bookable inventory." : "Availability flags are blocking bookable inventory."),
+      body: (bits.join(" and ") || "Review blocked inventory") + ". " + unavail + " unavailable days are blocking bookable inventory in the next 90 days.",
     });
   }
 
@@ -754,19 +951,25 @@ function draftFromAudit(parsed) {
         ". Shares: " + list + ".",
     });
     if (shortWindows.length) {
-      const verb = live.lastMinute ? "Tighten the live Last Minute" : "Activate Last Minute";
-      promos.push(makePromo({
-        name: "Last Minute", cancelPolicy: "NRF", discount: "12",
-        bookingWindow: "1-15 days", oneNight: true,
-        body: verb + " to close " + shortWindows.map((w) => w.label + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
-      }));
+      upsertPromo(promos, {
+        name: "Last Minute",
+        cancelPolicy: "NRF",
+        discount: "12",
+        bookingWindow: "0-15 days",
+        oneNight: true,
+        body: (live["Last Minute"] || live["Flash Sale"] ? "Tighten the live last-minute stack" : "Activate Last Minute") +
+          " to close " + shortWindows.map((w) => w.label + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
+      });
     }
     if (longWindows.length) {
-      const verb = live.early ? "Renew the Early Booking offers" : "Launch Early Booking";
-      promos.push(makePromo({
-        name: "Early Booking", cancelPolicy: "NRF", discount: "10", bookingWindow: "121+ days",
-        body: verb + " and retarget " + longWindows.map((w) => w.label + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
-      }));
+      upsertPromo(promos, {
+        name: "Early Booking",
+        cancelPolicy: "NRF",
+        discount: "10",
+        bookingWindow: "121+ days",
+        body: (live["Early Booking"] ? "Renew the Early Booking offers" : "Launch Early Booking") +
+          " and retarget " + longWindows.map((w) => w.label + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
+      });
     }
   }
 
@@ -776,14 +979,14 @@ function draftFromAudit(parsed) {
       label: "Length of Stay",
       body: "Stimulate 1-night production with a dedicated single-night condition. Hotel 1N share is " + los.hotel + "% versus the " + los.target + "% target.",
     });
-    promos.push(makePromo({
+    upsertPromo(promos, {
       name: "Long Stay",
       combinable: true,
-      combinableWith: live.longStay ? "Opaque" : "",
+      combinableWith: live["Long Stay"] ? "Opaque" : "all live offers",
       tiers: [{ nights: "1N", pct: "8" }, { nights: "2N", pct: "10" }, { nights: "3N+", pct: "12" }],
-      body: (live.longStay ? "Extend the live Long Stay offer with a 1-night tier. " : "Launch a Long Stay offer with a 1-night tier. ") +
+      body: (live["Long Stay"] ? "Extend the live Long Stay offer with a 1-night tier. " : "Launch a Long Stay offer with a 1-night tier. ") +
         "1N share is " + los.hotel + "% vs " + los.target + "% target.",
-    }));
+    });
   }
 
   if (markets.length) {
@@ -794,14 +997,14 @@ function draftFromAudit(parsed) {
       label: "Source Markets",
       body: "Open geo push on " + names.join(", ") + ". Shares are " + shares + ".",
     });
-    promos.push(makePromo({
+    upsertPromo(promos, {
       name: "Geo Promo",
       discount: "2-5",
       combinable: true,
       combinableWith: "all live offers",
       markets: markets.map((m) => m.iso).filter(Boolean),
       body: "Apply a small combinable geo discount on " + names.join(", ") + ". " + shares + ".",
-    }));
+    });
   }
 
   if (weekdays.length) {
@@ -811,31 +1014,27 @@ function draftFromAudit(parsed) {
       body: "Target " + weekdays.map((w) => w.day).join(" and ") + " check-ins with day-conditioned offers. Hotel mix is " +
         weekdays.map((w) => w.hotel + "% vs " + w.target + "%").join(" and ") + ".",
     });
-    if (!promos.some((p) => p.name === "Long Stay")) {
-      promos.push(makePromo({
+    if (price.competitiveShare >= WEEKDAY_OFFER_MIN) {
+      upsertPromo(promos, {
         name: "Long Stay",
         combinable: true,
         weekdays: weekdays.map((w) => w.day),
         tiers: [{ nights: "1N", pct: "8" }, { nights: "2N", pct: "10" }, { nights: "3N+", pct: "12" }],
         body: "Weight Long Stay toward " + weekdays.map((w) => w.day + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
-      }));
-    } else {
-      const ls = promos.find((p) => p.name === "Long Stay");
-      ls.weekdays = weekdays.map((w) => w.day);
-      ls.body += " " + weekdays.map((w) => w.day).join(" and ") + " sit at " + weekdays.map((w) => w.hotel + "% vs " + w.target + "%").join(" and ") + ".";
+      });
     }
   }
 
   if (cancel && cancel >= 40) {
-    promos.push(makePromo({
+    upsertPromo(promos, {
       name: "Opaque",
       cancelPolicy: "NR",
       combinable: true,
       combinableWith: "live offers",
       extra: "priority on high-cancel sources",
-      body: (live.opaque ? "Tighten NR/Opaque conditions on the live stack" : "Add Opaque / NR conditions") +
+      body: (live["Opaque"] ? "Tighten NR/Opaque conditions on the live stack" : "Add Opaque / NR conditions") +
         " for high-cancel sources. Cancellation rate is " + cancel + "%.",
-    }));
+    });
   }
 
   if (!recs.length) warnings.push("No clear gaps were extracted automatically. Add recommendations by hand, or check the deck format.");
@@ -879,7 +1078,7 @@ function applyTypeDefaults(p) {
     p.combinableWith = p.combinableWith || "live offers";
   }
   if (p.name === "Last Minute" && !p.discount) {
-    p.cancelPolicy = "NRF"; p.discount = "12"; p.bookingWindow = "1-15 days"; p.oneNight = true;
+    p.cancelPolicy = "NRF"; p.discount = "12"; p.bookingWindow = p.bookingWindow || "0-15 days"; p.oneNight = true;
   }
   if (p.name === "Flash Sale" && !p.discount) {
     p.cancelPolicy = "NRF"; p.discount = "12"; p.discountMin = true; p.bookingWindow = "short-term"; p.combinable = true;
