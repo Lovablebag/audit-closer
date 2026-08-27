@@ -739,6 +739,18 @@ function defaultOfferFor(period) {
   if (period === "medium") return "Flash Sale";
   return "Early Booking";
 }
+const PRICE_TOOLS = ["Last Minute", "Flash Sale", "Early Booking"];
+function pickPriceTool(period, covering, live) {
+  const existing = covering || [];
+  const coveringTools = PRICE_TOOLS.filter((n) => existing.includes(n));
+  const def = defaultOfferFor(period);
+  if (coveringTools.length) {
+    const name = coveringTools.indexOf(def) >= 0 ? def : coveringTools[0];
+    return { name, enhance: true };
+  }
+  if (live[def]) return { name: def, enhance: true };
+  return { name: def, enhance: false };
+}
 
 const DIST_MARGIN = -10;
 const AVAIL_MAX_SHARE = 0.10;
@@ -811,18 +823,15 @@ function analyzePriceCheck(parsed) {
   const byName = {};
   for (const p of weak) {
     const existing = covering[p] || [];
-    const preferredHit = ["Flash Sale", "Last Minute", "Early Booking"].find((n) => existing.includes(n));
-    let name, enhance;
-    if (preferredHit) { name = preferredHit; enhance = true; }
-    else if (existing.length) { name = existing[0]; enhance = true; }
-    else if (live[defaultOfferFor(p)]) { name = defaultOfferFor(p); enhance = true; }
-    else { name = defaultOfferFor(p); enhance = false; }
-    if (!byName[name]) {
-      byName[name] = { name, periods: [], enhance };
-      groups.push(byName[name]);
+    const pick = pickPriceTool(p, existing, live);
+    const stackOn = existing.filter((n) => PRICE_TOOLS.indexOf(n) < 0);
+    if (!byName[pick.name]) {
+      byName[pick.name] = { name: pick.name, periods: [], enhance: pick.enhance, stackOn: [] };
+      groups.push(byName[pick.name]);
     }
-    if (!byName[name].periods.includes(p)) byName[name].periods.push(p);
-    byName[name].enhance = byName[name].enhance || enhance;
+    if (!byName[pick.name].periods.includes(p)) byName[pick.name].periods.push(p);
+    byName[pick.name].enhance = byName[pick.name].enhance || pick.enhance;
+    byName[pick.name].stackOn = uniq(byName[pick.name].stackOn.concat(stackOn));
   }
   for (const g of groups) g.periods = sortPeriods(g.periods);
 
@@ -976,15 +985,19 @@ function draftFromAudit(parsed) {
         const w = price.worstByPeriod[p];
         return w ? (p + " " + fmtSignedPct(w.pctB2B) + " vs B2B") : "";
       }).filter(Boolean).join(", ");
+      const stack = (g.stackOn || []).filter(Boolean);
       const verb = g.enhance ? "Enhance the live " + g.name : "Launch a " + g.name;
+      let note;
+      if (g.enhance) note = "Best rate on those terms currently comes from this offer.";
+      else if (stack.length) note = "Best current rate on those terms comes from " + stack.join(" and ") + ". Stack " + g.name + " on top.";
+      else note = "Use it alone or stacked with other live offers.";
       const fields = {
         name: g.name,
         combinable: true,
-        combinableWith: "all live offers",
+        combinableWith: stack.length ? stack.join(", ") : "all live offers",
         bookingWindow: g.periods.length === 1 ? windowForPeriod(g.periods[0]) : periodPhrase(g.periods),
         body: verb + " covering " + periodPhrase(g.periods) + " until our rates exceed distribution margin. " +
-          (fig ? "Current position: " + fig + ". " : "") +
-          (g.enhance ? "Best rate on those terms currently comes from this offer." : "Use it alone or stacked with other live offers."),
+          (fig ? "Current position: " + fig + ". " : "") + note,
       };
       if (g.name === "Last Minute") { fields.cancelPolicy = "NRF"; fields.discount = "12"; fields.oneNight = true; }
       if (g.name === "Flash Sale") { fields.cancelPolicy = "NRF"; fields.discount = "12"; fields.discountMin = true; }
