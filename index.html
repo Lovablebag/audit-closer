@@ -115,6 +115,27 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .hidden { display: none !important; }
     .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+    .fields { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+    .field { display: grid; gap: .2rem; min-width: 0; }
+    .field.span2 { grid-column: 1 / -1; }
+    .flab { font-size: 11px; font-weight: 500; color: var(--muted); }
+    .inline { display: flex; align-items: center; gap: .45rem; font-size: 13px; }
+    .inline input[type="checkbox"] { width: auto; accent-color: var(--accent); }
+    .chips { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+    .chip {
+      border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+      border-radius: 999px; padding: .2rem .55rem; font-size: 11px; font-weight: 500; height: 1.75rem;
+    }
+    .chip.on { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+    .compiled {
+      font-size: 12px; color: var(--ink); background: var(--bg); border-radius: 6px;
+      padding: .45rem .65rem; line-height: 1.4;
+    }
+    .compiled .flab { display: block; margin-bottom: .15rem; }
+    .tierrow { display: flex; gap: .35rem; align-items: center; }
+    .tierrow input { width: 4.25rem; }
+    .tierrow input.wide { width: 5.5rem; }
+    select.slim { width: auto; min-width: 8rem; }
   </style>
 </head>
 <body>
@@ -206,7 +227,7 @@
             <div style="display:flex;justify-content:space-between;gap:.75rem;align-items:center">
               <div>
                 <h3 style="font-size:14px;font-family:inherit;font-weight:600">Suggested Promos</h3>
-                <p class="muted" style="font-size:12px">Closed names only. One promo per real gap.</p>
+                <p class="muted" style="font-size:12px">Builder for type, discount, window, markets. Compiles onto the slide.</p>
               </div>
               <span class="badge muted" id="fit-promo">Fits the box</span>
             </div>
@@ -236,6 +257,95 @@
 <script>
 const PROMO_NAMES = ["Early Booking","Last Minute","Flash Sale","Long Stay","Geo Promo","Opaque"];
 const AMP = "&", LT = "<", GT = ">", QUOT = '"';
+const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const CANCEL_OPTS = ["", "NRF", "NR", "Flexible"];
+const WINDOW_OPTS = ["", "1-5 days", "1-15 days", "6-15 days", "short-term", "31-60 days", "61-90 days", "91-120 days", "121+ days", "181+ days"];
+const MARKETS = [
+  { name: "United States", iso: "US" },
+  { name: "United Kingdom", iso: "GB" },
+  { name: "Germany", iso: "DE" },
+  { name: "France", iso: "FR" },
+  { name: "China", iso: "CN" },
+  { name: "Italy", iso: "IT" },
+  { name: "Spain", iso: "ES" },
+  { name: "Netherlands", iso: "NL" },
+  { name: "Belgium", iso: "BE" },
+  { name: "Switzerland", iso: "CH" },
+  { name: "Austria", iso: "AT" },
+  { name: "Poland", iso: "PL" },
+  { name: "Sweden", iso: "SE" },
+  { name: "Norway", iso: "NO" },
+  { name: "Denmark", iso: "DK" },
+  { name: "Ireland", iso: "IE" },
+  { name: "Portugal", iso: "PT" },
+  { name: "Greece", iso: "GR" },
+  { name: "Czechia", iso: "CZ" },
+  { name: "Hungary", iso: "HU" },
+  { name: "Romania", iso: "RO" },
+  { name: "Finland", iso: "FI" },
+  { name: "Turkey", iso: "TR" },
+  { name: "United Arab Emirates", iso: "AE" },
+  { name: "Saudi Arabia", iso: "SA" },
+  { name: "Japan", iso: "JP" },
+  { name: "South Korea", iso: "KR" },
+  { name: "Australia", iso: "AU" },
+  { name: "Canada", iso: "CA" },
+  { name: "Brazil", iso: "BR" },
+  { name: "India", iso: "IN" },
+];
+const MARKET_BY_NAME = Object.fromEntries(MARKETS.map((m) => [m.name.toLowerCase(), m]));
+MARKET_BY_NAME.uae = MARKETS.find((m) => m.iso === "AE");
+MARKET_BY_NAME.saudi = MARKETS.find((m) => m.iso === "SA");
+MARKET_BY_NAME.korea = MARKETS.find((m) => m.iso === "KR");
+MARKET_BY_NAME["united arab emirates"] = MARKETS.find((m) => m.iso === "AE");
+MARKET_BY_NAME["czech republic"] = MARKETS.find((m) => m.iso === "CZ");
+MARKET_BY_NAME.uk = MARKETS.find((m) => m.iso === "GB");
+MARKET_BY_NAME.usa = MARKETS.find((m) => m.iso === "US");
+
+function isoFor(name) {
+  const hit = MARKET_BY_NAME[String(name || "").toLowerCase()];
+  return hit ? hit.iso : "";
+}
+
+function makePromo(fields) {
+  return Object.assign({
+    id: uid(),
+    name: "Flash Sale",
+    cancelPolicy: "",
+    discount: "",
+    discountMin: false,
+    bookingWindow: "",
+    oneNight: false,
+    combinable: false,
+    combinableWith: "",
+    markets: [],
+    weekdays: [],
+    tiers: [],
+    extra: "",
+    body: "",
+  }, fields || {});
+}
+
+function compileConditions(p) {
+  const bits = [];
+  if (p.cancelPolicy) bits.push(p.cancelPolicy);
+  const liveTiers = (p.tiers || []).filter((t) => String(t.nights || "").trim() && String(t.pct || "").trim());
+  if (liveTiers.length) {
+    bits.push(liveTiers.map((t) => t.nights.trim() + " " + String(t.pct).trim() + "%").join(", "));
+  } else if (String(p.discount || "").trim()) {
+    bits.push((p.discountMin ? "min " : "") + String(p.discount).trim() + "% off");
+  }
+  if (p.bookingWindow) {
+    const w = String(p.bookingWindow).trim();
+    bits.push(/day|short|term|window/i.test(w) ? w : "booking window " + w);
+  }
+  if (p.oneNight) bits.push("1N eligible");
+  if (p.combinable) bits.push(p.combinableWith ? "combinable with " + p.combinableWith : "combinable");
+  if (p.markets && p.markets.length) bits.push(p.markets.join("/"));
+  if (p.weekdays && p.weekdays.length) bits.push(p.weekdays.join("/") + " check-in");
+  if (p.extra) bits.push(p.extra);
+  return bits.filter(Boolean).join(", ");
+}
 
 const state = {
   phase: "idle",
@@ -301,7 +411,7 @@ function formatRecommendation(item) {
 }
 function formatPromo(item) {
   const name = stripDashes(item.name).replace(/:+$/, "");
-  const conditions = stripDashes(item.conditions);
+  const conditions = compileConditions(item);
   const body = sanitizeBody(item.body);
   const prefix = conditions ? name + " (" + conditions + ")" : name;
   return (prefix + ": " + body).trim();
@@ -463,7 +573,7 @@ async function writeCompletedPptx(original, draft) {
   const promoParas = promos.length ? promos.map((p) => {
     const full = formatPromo(p);
     const name = p.name.replace(/:+$/, "").trim();
-    const conditions = p.conditions.trim();
+    const conditions = compileConditions(p);
     const prefix = conditions ? name + " (" + conditions + "): " : name ? name + ": " : "";
     const rest = prefix && full.startsWith(prefix) ? full.slice(prefix.length) : full;
     return paraXml(prefix, rest, sz);
@@ -533,12 +643,28 @@ function extractWeekdays(t) {
   return weak;
 }
 function extractMarkets(t) {
-  const names = ["United States","United Kingdom","Germany","France","China","Italy","Spain","Netherlands","Belgium","Switzerland","Austria","Poland","Sweden","Norway","Denmark","Ireland","Portugal","Greece","Turkey","UAE","Saudi","Japan","Korea","Australia","Canada","Brazil","India","Russia"];
   const weak = [];
-  for (const n of names) {
-    const re = new RegExp(n + "[^\\n]{0,50}?(\\d+(?:\\.\\d+)?)\\s*%[^\\n]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
-    const m = t.match(re);
-    if (m && Number(m[1]) + 0.5 < Number(m[2])) weak.push({ name: n, hotel: Number(m[1]), target: Number(m[2]) });
+  const seen = new Set();
+  const labels = [];
+  for (const m of MARKETS) {
+    labels.push({ name: m.name, iso: m.iso, needle: m.name });
+  }
+  labels.push(
+    { name: "United Arab Emirates", iso: "AE", needle: "UAE" },
+    { name: "Saudi Arabia", iso: "SA", needle: "Saudi" },
+    { name: "South Korea", iso: "KR", needle: "Korea" },
+    { name: "United Kingdom", iso: "GB", needle: "UK" },
+    { name: "United States", iso: "US", needle: "USA" },
+    { name: "Czechia", iso: "CZ", needle: "Czech Republic" },
+  );
+  for (const m of labels) {
+    if (seen.has(m.iso)) continue;
+    const re = new RegExp(m.needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^\\n]{0,50}?(\\d+(?:\\.\\d+)?)\\s*%[^\\n]{0,40}?(\\d+(?:\\.\\d+)?)\\s*%", "i");
+    const hit = t.match(re);
+    if (hit && Number(hit[1]) + 0.5 < Number(hit[2])) {
+      seen.add(m.iso);
+      weak.push({ name: m.name, iso: m.iso, hotel: Number(hit[1]), target: Number(hit[2]) });
+    }
   }
   return weak;
 }
@@ -574,9 +700,17 @@ function draftFromAudit(parsed) {
       : "Create a new promo with a discount large enough to put G2 at B2B <= -10% on every term.";
     recs.push({ id: uid(), label: "Competitiveness", body: action + " Current G2 vs B2B includes " + worstB2B + "%." });
     if (live.flash) {
-      promos.push({ id: uid(), name: "Flash Sale", conditions: "NRF, min 12% off, short-term, combinable", body: "Strengthen the live Flash Sale so short-term G2 clears B2B <= -10%. Current position includes " + worstB2B + "% vs B2B." });
+      promos.push(makePromo({
+        name: "Flash Sale", cancelPolicy: "NRF", discount: "12", discountMin: true,
+        bookingWindow: "short-term", combinable: true,
+        body: "Strengthen the live Flash Sale so short-term G2 clears B2B <= -10%. Current position includes " + worstB2B + "% vs B2B.",
+      }));
     } else {
-      promos.push({ id: uid(), name: "Flash Sale", conditions: "NRF, min 12% off, short-term, combinable", body: "Launch a Flash Sale large enough to push short-term G2 to B2B <= -10%. Current position includes " + worstB2B + "% vs B2B." });
+      promos.push(makePromo({
+        name: "Flash Sale", cancelPolicy: "NRF", discount: "12", discountMin: true,
+        bookingWindow: "short-term", combinable: true,
+        body: "Launch a Flash Sale large enough to push short-term G2 to B2B <= -10%. Current position includes " + worstB2B + "% vs B2B.",
+      }));
     }
   }
 
@@ -602,19 +736,19 @@ function draftFromAudit(parsed) {
         ". Shares: " + list + ".",
     });
     if (shortWindows.length) {
-      const name = "Last Minute";
       const verb = live.lastMinute ? "Tighten the live Last Minute" : "Activate Last Minute";
-      promos.push({
-        id: uid(), name, conditions: "NRF, 12% off, booking window 1-15 days, 1N eligible",
+      promos.push(makePromo({
+        name: "Last Minute", cancelPolicy: "NRF", discount: "12",
+        bookingWindow: "1-15 days", oneNight: true,
         body: verb + " to close " + shortWindows.map((w) => w.label + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
-      });
+      }));
     }
     if (longWindows.length) {
       const verb = live.early ? "Renew the Early Booking offers" : "Launch Early Booking";
-      promos.push({
-        id: uid(), name: "Early Booking", conditions: "10% off, 121+ day window, NRF option",
+      promos.push(makePromo({
+        name: "Early Booking", cancelPolicy: "NRF", discount: "10", bookingWindow: "121+ days",
         body: verb + " and retarget " + longWindows.map((w) => w.label + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
-      });
+      }));
     }
   }
 
@@ -624,13 +758,14 @@ function draftFromAudit(parsed) {
       label: "Length of Stay",
       body: "Stimulate 1-night production with a dedicated single-night condition. Hotel 1N share is " + los.hotel + "% versus the " + los.target + "% target.",
     });
-    promos.push({
-      id: uid(),
+    promos.push(makePromo({
       name: "Long Stay",
-      conditions: live.longStay ? "add 1N tier, keep longer-stay discounts, combinable with Opaque" : "1N 8%, 2N 10%, 3N+ 12%, combinable",
+      combinable: true,
+      combinableWith: live.longStay ? "Opaque" : "",
+      tiers: [{ nights: "1N", pct: "8" }, { nights: "2N", pct: "10" }, { nights: "3N+", pct: "12" }],
       body: (live.longStay ? "Extend the live Long Stay offer with a 1-night tier. " : "Launch a Long Stay offer with a 1-night tier. ") +
         "1N share is " + los.hotel + "% vs " + los.target + "% target.",
-    });
+    }));
   }
 
   if (markets.length) {
@@ -641,12 +776,14 @@ function draftFromAudit(parsed) {
       label: "Source Markets",
       body: "Open geo push on " + names.join(", ") + ". Shares are " + shares + ".",
     });
-    promos.push({
-      id: uid(),
+    promos.push(makePromo({
       name: "Geo Promo",
-      conditions: "2-5% off, combinable with all live offers, " + names.map((n) => n.slice(0, 2).toUpperCase()).join("/"),
+      discount: "2-5",
+      combinable: true,
+      combinableWith: "all live offers",
+      markets: markets.map((m) => m.iso).filter(Boolean),
       body: "Apply a small combinable geo discount on " + names.join(", ") + ". " + shares + ".",
-    });
+    }));
   }
 
   if (weekdays.length) {
@@ -657,27 +794,30 @@ function draftFromAudit(parsed) {
         weekdays.map((w) => w.hotel + "% vs " + w.target + "%").join(" and ") + ".",
     });
     if (!promos.some((p) => p.name === "Long Stay")) {
-      promos.push({
-        id: uid(),
+      promos.push(makePromo({
         name: "Long Stay",
-        conditions: weekdays.map((w) => w.day).join("/") + " check-in boost, combinable",
+        combinable: true,
+        weekdays: weekdays.map((w) => w.day),
+        tiers: [{ nights: "1N", pct: "8" }, { nights: "2N", pct: "10" }, { nights: "3N+", pct: "12" }],
         body: "Weight Long Stay toward " + weekdays.map((w) => w.day + " (" + w.hotel + "% vs " + w.target + "%)").join(" and ") + ".",
-      });
+      }));
     } else {
       const ls = promos.find((p) => p.name === "Long Stay");
-      ls.conditions += ", " + weekdays.map((w) => w.day).join("/") + " check-in boost";
+      ls.weekdays = weekdays.map((w) => w.day);
       ls.body += " " + weekdays.map((w) => w.day).join(" and ") + " sit at " + weekdays.map((w) => w.hotel + "% vs " + w.target + "%").join(" and ") + ".";
     }
   }
 
   if (cancel && cancel >= 40) {
-    promos.push({
-      id: uid(),
+    promos.push(makePromo({
       name: "Opaque",
-      conditions: "NR, stacked on live offers, priority on high-cancel sources",
+      cancelPolicy: "NR",
+      combinable: true,
+      combinableWith: "live offers",
+      extra: "priority on high-cancel sources",
       body: (live.opaque ? "Tighten NR/Opaque conditions on the live stack" : "Add Opaque / NR conditions") +
         " for high-cancel sources. Cancellation rate is " + cancel + "%.",
-    });
+    }));
   }
 
   if (!recs.length) warnings.push("No clear gaps were extracted automatically. Add recommendations by hand, or check the deck format.");
@@ -704,6 +844,114 @@ function estimateFit(lines) {
   if (est > 11) return { text: "May overflow the box", cls: "warn" };
   if (est > 7) return { text: "Tight fit", cls: "muted" };
   return { text: "Fits the box", cls: "ok" };
+}
+
+function applyTypeDefaults(p) {
+  if (p.name === "Long Stay" && !(p.tiers && p.tiers.length)) {
+    p.tiers = [{ nights: "1N", pct: "8" }, { nights: "2N", pct: "10" }, { nights: "3N+", pct: "12" }];
+    if (!p.combinable) p.combinable = true;
+  }
+  if (p.name === "Geo Promo") {
+    if (!p.discount) p.discount = "2-5";
+    if (!p.combinable) { p.combinable = true; p.combinableWith = p.combinableWith || "all live offers"; }
+  }
+  if (p.name === "Opaque" && !p.cancelPolicy) {
+    p.cancelPolicy = "NR";
+    p.combinable = true;
+    p.combinableWith = p.combinableWith || "live offers";
+  }
+  if (p.name === "Last Minute" && !p.discount) {
+    p.cancelPolicy = "NRF"; p.discount = "12"; p.bookingWindow = "1-15 days"; p.oneNight = true;
+  }
+  if (p.name === "Flash Sale" && !p.discount) {
+    p.cancelPolicy = "NRF"; p.discount = "12"; p.discountMin = true; p.bookingWindow = "short-term"; p.combinable = true;
+  }
+  if (p.name === "Early Booking" && !p.discount) {
+    p.cancelPolicy = "NRF"; p.discount = "10"; p.bookingWindow = "121+ days";
+  }
+}
+
+function optionList(opts, selected) {
+  return opts.map((o) => {
+    const val = o;
+    const label = o || "—";
+    return `<option value="${escapeHtml(val)}" ${val === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+}
+
+function promoCardHtml(item, i, total) {
+  const cond = compileConditions(item);
+  const unusedMarkets = MARKETS.filter((m) => !(item.markets || []).includes(m.iso));
+  const windowCustom = item.bookingWindow && !WINDOW_OPTS.includes(item.bookingWindow);
+  const windowOpts = windowCustom ? WINDOW_OPTS.concat([item.bookingWindow]) : WINDOW_OPTS;
+  return `
+    <article class="item" data-id="${item.id}">
+      <div class="item-bar">
+        <select data-k="name" class="slim">${PROMO_NAMES.map((n) => `<option ${n===item.name?"selected":""}>${n}</option>`).join("")}</select>
+        <span style="margin-left:auto;display:flex">
+          <button class="iconbtn" data-act="up" ${i===0?"disabled":""} title="Move up">↑</button>
+          <button class="iconbtn" data-act="down" ${i===total-1?"disabled":""} title="Move down">↓</button>
+          <button class="iconbtn" data-act="del" title="Remove">✕</button>
+        </span>
+      </div>
+      <div class="fields">
+        <label class="field"><span class="flab">Cancellation</span>
+          <select data-k="cancelPolicy">${optionList(CANCEL_OPTS, item.cancelPolicy || "")}</select>
+        </label>
+        <label class="field"><span class="flab">Discount %</span>
+          <div class="inline">
+            <input data-k="discount" value="${escapeHtml(item.discount)}" placeholder="12" />
+            <label class="inline" title="Prefix with min"><input type="checkbox" data-k="discountMin" ${item.discountMin?"checked":""}/> min</label>
+          </div>
+        </label>
+        <label class="field"><span class="flab">Booking window</span>
+          <select data-k="bookingWindow">${optionList(windowOpts, item.bookingWindow || "")}</select>
+        </label>
+        <label class="field"><span class="flab">Combinable with</span>
+          <div class="inline">
+            <input type="checkbox" data-k="combinable" ${item.combinable?"checked":""}/>
+            <input data-k="combinableWith" value="${escapeHtml(item.combinableWith)}" placeholder="all live offers" ${item.combinable?"":"disabled"} />
+          </div>
+        </label>
+        <div class="field span2">
+          <span class="flab">LOS tiers</span>
+          ${(item.tiers && item.tiers.length ? item.tiers : []).map((t, ti) => `
+            <div class="tierrow">
+              <input class="wide" data-k="tierNights" data-i="${ti}" value="${escapeHtml(t.nights)}" placeholder="1N" />
+              <input data-k="tierPct" data-i="${ti}" value="${escapeHtml(t.pct)}" placeholder="8" />
+              <span class="muted">%</span>
+              <button class="iconbtn" data-act="deltier" data-i="${ti}" title="Remove tier">✕</button>
+            </div>`).join("")}
+          <button class="btn ghost sm" data-act="addtier" type="button">+ Add tier</button>
+        </div>
+        <div class="field span2">
+          <span class="flab">Source markets (ISO)</span>
+          <div class="chips">
+            ${(item.markets || []).map((iso) => `<button type="button" class="chip on" data-act="unmarket" data-iso="${escapeHtml(iso)}">${escapeHtml(iso)} ×</button>`).join("")}
+            <select data-act="addmarket" class="slim">
+              <option value="">Add market</option>
+              ${unusedMarkets.map((m) => `<option value="${m.iso}">${m.iso} · ${escapeHtml(m.name)}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="field span2">
+          <span class="flab">Check-in days</span>
+          <div class="chips">
+            ${DAYS.map((day) => `<button type="button" class="chip ${(item.weekdays||[]).includes(day)?"on":""}" data-act="day" data-day="${day}">${day.slice(0,3)}</button>`).join("")}
+          </div>
+        </div>
+        <label class="field"><span class="flab">Flags</span>
+          <label class="inline"><input type="checkbox" data-k="oneNight" ${item.oneNight?"checked":""}/> 1N eligible</label>
+        </label>
+        <label class="field"><span class="flab">Extra condition</span>
+          <input data-k="extra" value="${escapeHtml(item.extra)}" placeholder="short-term, stacked, …" />
+        </label>
+        <label class="field span2"><span class="flab">Rationale</span>
+          <textarea data-k="body" placeholder="Why this promo. Use a figure from the audit.">${escapeHtml(item.body)}</textarea>
+        </label>
+      </div>
+      <p class="compiled"><span class="flab">On the slide</span><span data-compiled>${escapeHtml(item.name)}${cond ? " (" + escapeHtml(cond) + ")" : ""}</span></p>
+    </article>`;
 }
 
 function renderEditor() {
@@ -740,20 +988,13 @@ function renderEditor() {
       <textarea data-k="body" placeholder="Concrete action. Motivation with a figure from the audit.">${escapeHtml(item.body)}</textarea>
     </article>`).join("");
 
-  document.getElementById("promo-list").innerHTML = d.promos.map((item, i) => `
-    <article class="item" data-id="${item.id}">
-      <div class="item-bar" style="flex-wrap:wrap">
-        <select data-k="name">${PROMO_NAMES.map((n) => `<option ${n===item.name?"selected":""}>${n}</option>`).join("")}</select>
-        <input value="${escapeHtml(item.conditions)}" data-k="conditions" placeholder="Key conditions (NR, 12% off, 0-5 days)" style="flex:1;min-width:10rem" />
-        <span style="display:flex">
-          <button class="iconbtn" data-act="up" ${i===0?"disabled":""} title="Move up">↑</button>
-          <button class="iconbtn" data-act="down" ${i===d.promos.length-1?"disabled":""} title="Move down">↓</button>
-          <button class="iconbtn" data-act="del" title="Remove">✕</button>
-        </span>
-      </div>
-      <textarea data-k="body" placeholder="Description. Rationale with a figure from the audit.">${escapeHtml(item.body)}</textarea>
-    </article>`).join("");
+  document.getElementById("promo-list").innerHTML = d.promos.map((item, i) => promoCardHtml(item, i, d.promos.length)).join("");
+  renderSlide();
+}
 
+function renderSlide() {
+  const d = state.draft;
+  if (!d) return;
   const recs = d.recommendations.filter((r) => r.label.trim() || r.body.trim());
   const promos = d.promos.filter((p) => p.name.trim() || p.body.trim());
   function card(title, items) {
@@ -779,7 +1020,19 @@ function renderEditor() {
       ${card("Suggested Promos", promos.map(formatPromo))}
     </div>`;
   document.getElementById("dock-name").textContent = completedFileName(d.hotelName, state.fileName);
+  const promoFit = estimateFit(d.promos.map(formatPromo));
+  const fp = document.getElementById("fit-promo");
+  fp.textContent = promoFit.text; fp.className = "badge " + promoFit.cls;
   queueDownload();
+}
+
+function refreshPromoCard(art, item) {
+  const el = art.querySelector("[data-compiled]");
+  const cond = compileConditions(item);
+  if (el) el.textContent = item.name + (cond ? " (" + cond + ")" : "");
+  const withInput = art.querySelector('[data-k="combinableWith"]');
+  if (withInput) withInput.disabled = !item.combinable;
+  renderSlide();
 }
 
 function moveItem(list, id, dir) {
@@ -894,7 +1147,9 @@ document.getElementById("btn-add-rec").addEventListener("click", () => {
   renderEditor();
 });
 document.getElementById("btn-add-promo").addEventListener("click", () => {
-  state.draft.promos.push({ id: uid(), name: "Flash Sale", conditions: "", body: "" });
+  const p = makePromo({ name: "Flash Sale" });
+  applyTypeDefaults(p);
+  state.draft.promos.push(p);
   renderEditor();
 });
 function bindList(el, key) {
@@ -904,18 +1159,59 @@ function bindList(el, key) {
     const item = state.draft[key].find((x) => x.id === art.dataset.id);
     if (!item) return;
     const k = e.target.dataset.k;
-    if (k) item[k] = e.target.value;
-    queueDownload();
+    if (!k) return;
+    if (k === "discountMin" || k === "oneNight" || k === "combinable") item[k] = e.target.checked;
+    else if (k === "tierNights" || k === "tierPct") {
+      const i = Number(e.target.dataset.i);
+      if (!item.tiers) item.tiers = [];
+      if (!item.tiers[i]) item.tiers[i] = { nights: "", pct: "" };
+      item.tiers[i][k === "tierNights" ? "nights" : "pct"] = e.target.value;
+    } else {
+      item[k] = e.target.value;
+    }
+    if (key === "promos") refreshPromoCard(art, item);
+    else queueDownload();
+  });
+  el.addEventListener("change", (e) => {
+    const art = e.target.closest("[data-id]");
+    if (!art || key !== "promos") return;
+    const item = state.draft.promos.find((x) => x.id === art.dataset.id);
+    if (!item) return;
+    if (e.target.dataset.act === "addmarket" && e.target.value) {
+      if (!item.markets.includes(e.target.value)) item.markets.push(e.target.value);
+      renderEditor();
+      return;
+    }
+    if (e.target.dataset.k === "name") {
+      applyTypeDefaults(item);
+      renderEditor();
+    }
   });
   el.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-act]");
     if (!btn) return;
+    if (btn.tagName === "SELECT") return;
     const art = btn.closest("[data-id]");
+    if (!art) return;
     const id = art.dataset.id;
     const act = btn.dataset.act;
     if (act === "del") state.draft[key] = state.draft[key].filter((x) => x.id !== id);
     if (act === "up") state.draft[key] = moveItem(state.draft[key], id, -1);
     if (act === "down") state.draft[key] = moveItem(state.draft[key], id, 1);
+    if (key === "promos") {
+      const item = state.draft.promos.find((x) => x.id === id);
+      if (item && act === "addtier") {
+        if (!item.tiers) item.tiers = [];
+        item.tiers.push({ nights: "", pct: "" });
+      }
+      if (item && act === "deltier") item.tiers.splice(Number(btn.dataset.i), 1);
+      if (item && act === "unmarket") item.markets = item.markets.filter((iso) => iso !== btn.dataset.iso);
+      if (item && act === "day") {
+        const day = btn.dataset.day;
+        item.weekdays = item.weekdays || [];
+        item.weekdays = item.weekdays.includes(day) ? item.weekdays.filter((d) => d !== day) : item.weekdays.concat(day);
+      }
+    }
     renderEditor();
   });
 }
