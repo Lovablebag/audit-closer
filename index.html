@@ -462,6 +462,37 @@ function extractChartValues(xml) {
   }
   return vals.join(" | ");
 }
+function parseChart(xml) {
+  const series = [];
+  const serRe = /<c:ser\b[\s\S]*?<\/c:ser>/g;
+  let sm;
+  while ((sm = serRe.exec(xml))) {
+    const block = sm[0];
+    const nameHit = block.match(/<c:tx>[\s\S]*?<c:v>([^<]+)<\/c:v>/);
+    const name = nameHit ? decodeXml(nameHit[1]).trim() : "";
+    const catBlock = (block.match(/<c:cat>[\s\S]*?<\/c:cat>/) || [])[0] || "";
+    const valBlock = (block.match(/<c:val>[\s\S]*?<\/c:val>/) || [])[0] || "";
+    const cats = [...catBlock.matchAll(/<c:v>([^<]*)<\/c:v>/g)].map((x) => decodeXml(x[1]).trim());
+    const raw = [...valBlock.matchAll(/<c:v>([^<]*)<\/c:v>/g)].map((x) => Number(x[1]));
+    const max = raw.reduce((a, n) => Math.max(a, Math.abs(n) || 0), 0);
+    const vals = max <= 1 && raw.length ? raw.map((n) => Math.round(n * 1000) / 10) : raw;
+    series.push({ name, cats, vals });
+  }
+  const categories = (series.find((s) => s.cats.length) || { cats: [] }).cats;
+  return { series, categories };
+}
+function hotelTargetPairs(chart) {
+  if (!chart || !chart.series) return [];
+  const hotel = chart.series.find((s) => /hotel/i.test(s.name));
+  const target = chart.series.find((s) => /target/i.test(s.name));
+  if (!hotel || !target) return [];
+  const cats = chart.categories.length ? chart.categories : hotel.cats;
+  return cats.map((label, i) => ({
+    label: String(label || "").trim(),
+    hotel: hotel.vals[i],
+    target: target.vals[i],
+  })).filter((x) => x.label && x.hotel != null && x.target != null && !isNaN(x.hotel) && !isNaN(x.target));
+}
 function pickAfter(texts, label) {
   const i = texts.findIndex((t) => t.toLowerCase() === label.toLowerCase());
   return i >= 0 && texts[i + 1] ? texts[i + 1] : "";
@@ -494,7 +525,7 @@ async function parseAuditPptx(buf, fileName) {
   const charts = [];
   for (let i = 0; i < chartFiles.length; i++) {
     const xml = await zip.file(chartFiles[i]).async("string");
-    charts.push({ index: i + 1, values: extractChartValues(xml) });
+    charts.push({ index: i + 1, path: chartFiles[i], values: extractChartValues(xml), ...parseChart(xml) });
   }
   const coreXml = (await zip.file("docProps/core.xml")?.async("string")) || "";
   const title = xmlGet(coreXml, "dc:title");
@@ -832,11 +863,47 @@ function extractWindows(t) {
   }
   return found.filter((w) => w.hotel + 1 < w.target);
 }
-function extractLOS(t) {
-  const m = t.match(/1\s*N(?:ight)?[^\d%]{0,40}?(\d+(?:\.\d+)?)\s*%[^\d%]{0,40}?(\d+(?:\.\d+)?)\s*%/i)
-    || t.match(/1-night[^\d%]{0,40}?(\d+(?:\.\d+)?)\s*%[^\d%]{0,40}?(\d+(?:\.\d+)?)\s*%/i);
-  if (m && Number(m[1]) + 1 < Number(m[2])) return { hotel: Number(m[1]), target: Number(m[2]) };
-  return null;
+function extractLOS(parsed) {
+  const bands = [];
+  const seen = new Set();
+  function add(label, hotel, target) {
+    const lab = formatLosLabel(label);
+    if (!lab || seen.has(lab)) return;
+    seen.add(lab);
+    bands.push({ label: lab, hotel: Number(hotel), target: Number(target) });
+  }
+  const charts = parsed && parsed.charts ? parsed.charts : [];
+  for (const c of charts) {
+    const pairs = hotelTargetPairs(c);
+    if (!isLosPairs(pairs)) continue;
+    for (const p of pairs) add(p.label, p.hotel, p.target);
+  }
+  if (!bands.length) {
+    const t = typeof parsed === "string" ? parsed : analysisText(parsed);
+    const re = /(15\+|11-14|8-10|[1-7])N?\s*\(hotel\s*(\d+(?:\.\d+)?)%\s*,\s*target\s*(\d+(?:\.\d+)?)%\)/gi;
+    let m;
+    while ((m = re.exec(t))) add(m[1], m[2], m[3]);
+  }
+  return bands
+    .filter((b) => b.hotel + 1 < b.target)
+    .sort((a, b) => (parseInt(a.label, 10) || 99) - (parseInt(b.label, 10) || 99));
+}
+function formatLosLabel(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (/^\d+$/.test(s)) return s + "N";
+  if (/^\d+\s*-\s*\d+$/.test(s)) return s.replace(/\s+/g, "") + "N";
+  if (/^\d+\+$/.test(s)) return s.replace("+", "") + "N+";
+  if (/N/i.test(s)) return s.toUpperCase().replace("NIGHT", "N");
+  return s;
+}
+function isLosPairs(pairs) {
+  if (!pairs || pairs.length < 4) return false;
+  const labs = pairs.map((p) => p.label);
+  if (labs.some((l) => /monday|tuesday|1-5|6-15|china|germany|united/i.test(l))) return false;
+  const has1 = labs.some((l) => l === "1" || /^1N$/i.test(l));
+  const hasStay = labs.some((l) => l === "2" || l === "15+" || l === "8-10" || /^2N$/i.test(l));
+  return has1 && hasStay;
 }
 function extractWeekdays(t) {
   const days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -887,7 +954,7 @@ function draftFromAudit(parsed) {
   const unavail = countMatch(allot, /(\d+)\s*(?:\||\s)+Unavailable days/i) || countMatch(t, /(\d+)\s+unavailable days/i) || (stop + sold);
   const cancel = countMatch(t, /(\d+(?:\.\d+)?)\s*%\s*(?:cancel|cancellation)/i) || countMatch(t, /cancell(?:ation|ed)[^%\n]{0,30}(\d+(?:\.\d+)?)\s*%/i);
   const windows = extractWindows(analysisText(parsed));
-  const los = extractLOS(analysisText(parsed));
+  const los = extractLOS(parsed);
   const weekdays = extractWeekdays(analysisText(parsed));
   const markets = extractMarkets(analysisText(parsed));
   const shortWindows = windows.filter((w) => /1-5|6-15/.test(w.label));
@@ -972,19 +1039,31 @@ function draftFromAudit(parsed) {
     }
   }
 
-  if (los) {
-    recs.push({
-      id: uid(),
-      label: "Length of Stay",
-      body: "Stimulate 1-night production with a dedicated single-night condition. Hotel 1N share is " + los.hotel + "% versus the " + los.target + "% target.",
-    });
+  if (los.length) {
+    const oneN = los.find((g) => g.label === "1N");
+    const longer = los.filter((g) => g.label !== "1N");
+    const shares = los.map((g) => g.label + " " + g.hotel + "% vs " + g.target + "%").join(", ");
+    let body;
+    if (longer.length && !oneN) {
+      body = "Shift production into " + longer.map((g) => g.label).join(" and ") + " stays. Shares: " + shares + ".";
+    } else if (oneN && !longer.length) {
+      body = "Stimulate 1-night production with a dedicated single-night condition. Hotel 1N share is " + oneN.hotel + "% versus the " + oneN.target + "% target.";
+    } else {
+      body = "Rebalance length of stay. Gaps: " + shares + ".";
+    }
+    recs.push({ id: uid(), label: "Length of Stay", body });
+    const tiers = longer.length && !oneN
+      ? [{ nights: "2N", pct: "8" }, { nights: "3N", pct: "10" }, { nights: "4N+", pct: "12" }]
+      : [{ nights: "1N", pct: "8" }, { nights: "2N", pct: "10" }, { nights: "3N+", pct: "12" }];
     upsertPromo(promos, {
       name: "Long Stay",
       combinable: true,
       combinableWith: live["Long Stay"] ? "Opaque" : "all live offers",
-      tiers: [{ nights: "1N", pct: "8" }, { nights: "2N", pct: "10" }, { nights: "3N+", pct: "12" }],
-      body: (live["Long Stay"] ? "Extend the live Long Stay offer with a 1-night tier. " : "Launch a Long Stay offer with a 1-night tier. ") +
-        "1N share is " + los.hotel + "% vs " + los.target + "% target.",
+      tiers,
+      body: (live["Long Stay"] ? "Extend the live Long Stay offer. " : "Launch a Long Stay offer. ") +
+        (longer.length && !oneN
+          ? "Weight it to " + longer.map((g) => g.label).join(" and ") + " to close " + shares + "."
+          : "Include a 1-night tier. " + shares + "."),
     });
   }
 
