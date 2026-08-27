@@ -734,7 +734,7 @@ function analyzePriceCheck(parsed) {
     });
   }
   const parts = t.split("|").map((s) => s.trim()).filter(Boolean);
-  const flags = parts.filter((p) => /^[!¡iv]\s+/i.test(p) || /^not competitive vs B2B/i.test(p) || /^best rate for/i.test(p));
+  const flags = parts.filter((p) => /not competitive vs B2B/i.test(p) || /best rate for/i.test(p));
   const notCompFlags = flags.filter((f) => /not competitive vs B2B/i.test(f));
   const bestRateFlags = flags.filter((f) => /best rate for/i.test(f));
 
@@ -764,7 +764,6 @@ function analyzePriceCheck(parsed) {
 
   const extras = [];
   if (notCompFlags.some((f) => /no mark-up/i.test(f))) extras.push("Includes no mark-up rooms");
-  if (flags.some((f) => /pending confirmation/i.test(f))) extras.push("A loaded rate is still pending hotel confirmation");
 
   const worstByPeriod = {};
   for (const p of ["short", "medium", "long"]) {
@@ -900,7 +899,7 @@ function draftFromAudit(parsed) {
       const w = price.worstByPeriod[p];
       return w ? (p + " term " + fmtSignedPct(w.pctB2B) + " vs B2B") : "";
     }).filter(Boolean).join(", ");
-    let body = "Push G2 past distribution margin on " + phrase + ", by deepening live offers or combining them.";
+    let body = "Our rates are not competitive vs B2B on " + phrase + ". Deepen the live offers or combine them until our rates exceed distribution margin.";
     if (figures) body += " Current position: " + figures + ".";
     if (price.extras.length) body += " " + price.extras.map((e) => String(e).replace(/\.$/, "")).join(". ") + ".";
     recs.push({ id: uid(), label: "Competitiveness", body });
@@ -916,7 +915,7 @@ function draftFromAudit(parsed) {
         combinable: true,
         combinableWith: "all live offers",
         bookingWindow: g.periods.length === 1 ? windowForPeriod(g.periods[0]) : periodPhrase(g.periods),
-        body: verb + " covering " + periodPhrase(g.periods) + " so G2 exceeds distribution margin. " +
+        body: verb + " covering " + periodPhrase(g.periods) + " until our rates exceed distribution margin. " +
           (fig ? "Current position: " + fig + ". " : "") +
           (g.enhance ? "Best rate on those terms currently comes from this offer." : "Use it alone or stacked with other live offers."),
       };
