@@ -271,28 +271,28 @@ function sanitizeBody(s) {
 }
 function decodeXml(s) {
   return s
-    .replace(/&/g, AMP)
-    .replace(/</g, LT)
-    .replace(/>/g, GT)
-    .replace(/"/g, QUOT)
-    .replace(/'/g, "'")
+    .replace(new RegExp(AMP + "amp;", "g"), AMP)
+    .replace(new RegExp(AMP + "lt;", "g"), LT)
+    .replace(new RegExp(AMP + "gt;", "g"), GT)
+    .replace(new RegExp(AMP + "quot;", "g"), QUOT)
+    .replace(new RegExp(AMP + "apos;", "g"), "'")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 }
 function encodeXml(s) {
   return String(s)
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/"/g, """);
+    .replace(/&/g, AMP + "amp;")
+    .replace(/</g, AMP + "lt;")
+    .replace(/>/g, AMP + "gt;")
+    .replace(/"/g, AMP + "quot;");
 }
 function escapeHtml(s) {
   return String(s)
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/"/g, """);
+    .replace(/&/g, AMP + "amp;")
+    .replace(/</g, AMP + "lt;")
+    .replace(/>/g, AMP + "gt;")
+    .replace(/"/g, AMP + "quot;");
 }
 function formatRecommendation(item) {
   const label = stripDashes(item.label).replace(/:+$/, "");
